@@ -61,8 +61,12 @@ raw.interceptors.response.use(
       return raw(original);
     }
 
-    // hard-invalid → clear and bounce to login
-    if (code === "TOKEN_INVALID" || code === "TOKEN_REUSE_DETECTED") {
+    // hard-invalid → clear and bounce to login, but only for a request that actually carried a
+    // bearer token. The session bootstrap's initial /auth/refresh call (Sprint 1) has none — a
+    // first-time anonymous visitor with no refresh cookie can plausibly get this same code back,
+    // and redirecting then would hard-reload whatever public page they're already on, in a loop.
+    const hadAuthHeader = Boolean(original?.headers?.Authorization);
+    if ((code === "TOKEN_INVALID" || code === "TOKEN_REUSE_DETECTED") && hadAuthHeader) {
       useAuthStore.getState().clear();
       if (typeof window !== "undefined") window.location.href = "/login";
     }

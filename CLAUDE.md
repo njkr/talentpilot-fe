@@ -26,3 +26,27 @@
 - SSE → lib/sse.ts (ticket then EventSource). 202→poll → hooks/use-poll-until.ts. Don't reinvent either.
 - No src/ directory — the project uses a flat root layout (app/, components/, lib/, stores/, hooks/,
   providers/, features/), matching the existing tsconfig `@/*` → `./*` alias.
+- The API base URL lives ONLY in NEXT_PUBLIC_API_URL (.env.local). Nothing else hardcodes the port.
+- The dev server is pinned to port 3001 (`npm run dev` → `next dev -p 3001`) so the frontend origin is
+  stable. The backend's CORS allowlist must include `http://localhost:3001` — if it doesn't, requests
+  with credentials will fail in-browser (blocked by the browser, not a backend error) while still
+  succeeding via curl, since curl doesn't enforce CORS. Confirmed 2026-07-22: the backend was allowing
+  only `http://localhost:5173` (a Vite default, not this project's port) — that's a backend-side config
+  fix, not something to work around from here.
+
+## Auth (Sprint 1)
+
+- The bootstrap (providers/auth-bootstrap.tsx) owns the 'loading' state and shows a splash. Guards
+  (components/auth/require-auth.tsx) act ONLY on 'anon'/'authed', never 'loading'. Never redirect on
+  loading — that flashes /login on every reload.
+- lib/api/client.ts's hard-redirect on TOKEN_INVALID/TOKEN_REUSE_DETECTED only fires when the failing
+  request carried a bearer token — the bootstrap's own token-less /auth/refresh call must be able to
+  fail silently (anonymous visitor, no cookie) without forcing a redirect loop on the page it's on.
+- Login errors: ALWAYS one generic message ("Email or password is incorrect"). The backend makes
+  unknown-email and wrong-password identical on purpose. Never write UI copy that distinguishes them.
+- Forgot-password ALWAYS shows "check your email", even for unknown emails. Backend always 204.
+- Access token: memory only (stores/auth.store.ts). Refresh: httpOnly cookie, handled by the API
+  client. Screens never touch tokens.
+- Reset password forces a fresh login (old session is dead server-side).
+- Auth API calls live in features/auth/auth.api.ts, wrapped by React Query hooks in
+  features/auth/auth.hooks.ts. Screens call the hooks, never `api` directly.
