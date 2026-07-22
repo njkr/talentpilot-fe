@@ -3,6 +3,7 @@
 import type { PropsWithChildren } from "react";
 import { useUiStore } from "@/stores/ui.store";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { UpgradeModal } from "@/components/billing/upgrade-modal";
 import { cn } from "@/lib/utils";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
@@ -24,6 +25,7 @@ export function AppShell({ children }: PropsWithChildren) {
           <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
         </div>
       </div>
+      <UpgradeModal />
     </TooltipProvider>
   );
 }

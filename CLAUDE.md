@@ -75,3 +75,33 @@
   the topbar.
 - Reuse StatusBadge (components/ui/status-badge.tsx) for every workspace/run status across the app.
 - Mobile drawer reuses Radix Dialog (focus-trap/escape/scroll-lock free). No separate drawer lib.
+- The shared upgrade modal (components/billing/upgrade-modal.tsx, state in stores/ui.store.ts) is
+  mounted once in AppShell. Any code calls `useUiStore.getState().openUpgradeModal(details)` on
+  INSUFFICIENT_CREDITS/PLAN_LIMIT_REACHED — don't build a per-feature upgrade dialog.
+
+## Resumes (Sprint 3)
+
+- Upload is 202→poll: POST returns status 'uploaded', then poll GET /resumes/:id via
+  usePollUntil (hooks/use-poll-until.ts) until parsed|failed. usePollUntil now takes an `enabled`
+  5th arg — pass false to skip polling a resume already known to be terminal (e.g. from a list).
+- A resume stuck at uploaded/extracted 30s+ (measured from the resume's own createdAt, not local
+  mount time) = worker likely down. Show a distinct "delayed" message, never an infinite spinner.
+- Multipart uploads: never set Content-Type manually. lib/api/client.ts's `api.post` auto-detects
+  a FormData body and unsets the default JSON Content-Type so the browser sets the multipart
+  boundary itself — a manual `'Content-Type': 'multipart/form-data'` header breaks the upload
+  server-side (no boundary param). Reset `input.value = ''` after reading a file so selecting the
+  same file twice still fires a change event.
+- Section `content` is polymorphic per sectionType. Confirmed real shapes (live + Postman, not
+  guessed) live in features/resumes/resume.types.ts: experience→highlights, personal_info→links[],
+  skills→string[], education→{degree,institution,field,startDate,endDate} (NOT `year`),
+  certifications→{name,issuer,date}. `projects`/`languages` have never been observed populated —
+  they render through a generic key/value fallback (SectionView's GenericContent) rather than a
+  guessed shape; update resume.types.ts with the real shape the first time one is actually seen.
+- Editing a section PATCHes and sets editedByUser:true (protects it from re-parse overwrite). Only
+  `summary` has an inline editor — don't add an Edit affordance to a structured section without
+  also building real field editing, or "Save" silently marks it edited with nothing changed.
+- Delete-in-use returns 409 RESUME_IN_USE with blocking workspaces in details.workspaces — surface
+  them (ResumeCardActions does this via a Modal, not a toast).
+- Real upload error codes (from the backend's ErrorCode enum, not guessed): FILE_TOO_LARGE
+  (details.maxMb), FILE_TYPE_UNSUPPORTED, FILE_UNREADABLE, FILE_CORRUPT, PLAN_LIMIT_REACHED.
+  There is no INVALID_FILE_TYPE code.

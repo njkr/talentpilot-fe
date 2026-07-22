@@ -86,8 +86,16 @@ raw.interceptors.response.use(
 // the typed wrapper every feature uses: unwraps `data`, or throws ApiError
 export const api = {
   get: <T>(url: string, params?: object) => raw.get<ApiSuccess<T>>(url, { params }).then((r) => r.data.data),
+  // FormData bodies (file uploads) must NOT carry the instance's default JSON Content-Type — the
+  // browser needs to set multipart/form-data itself, boundary and all. Passing Content-Type:
+  // 'multipart/form-data' explicitly (without a boundary) breaks the upload server-side; the fix
+  // is to unset the header for this one request so the browser fills it in.
   post: <T>(url: string, body?: unknown, headers?: object) =>
-    raw.post<ApiSuccess<T>>(url, body, { headers }).then((r) => r.data.data),
+    raw
+      .post<ApiSuccess<T>>(url, body, {
+        headers: body instanceof FormData ? { ...headers, "Content-Type": undefined } : headers,
+      })
+      .then((r) => r.data.data),
   patch: <T>(url: string, body?: unknown) => raw.patch<ApiSuccess<T>>(url, body).then((r) => r.data.data),
   put: <T>(url: string, body?: unknown) => raw.put<ApiSuccess<T>>(url, body).then((r) => r.data.data),
   del: <T>(url: string) => raw.delete<ApiSuccess<T>>(url).then((r) => r.data.data),
