@@ -105,3 +105,29 @@
 - Real upload error codes (from the backend's ErrorCode enum, not guessed): FILE_TOO_LARGE
   (details.maxMb), FILE_TYPE_UNSUPPORTED, FILE_UNREADABLE, FILE_CORRUPT, PLAN_LIMIT_REACHED.
   There is no INVALID_FILE_TYPE code.
+- The drag-drop file input is generic: components/ui/file-dropzone.tsx. Both resume and JD upload
+  compose it with their own mutation/error mapping — don't rebuild the drag/drop interaction per feature.
+
+## Job descriptions (Sprint 4)
+
+- Paste is INLINE — the POST response already carries status:'analyzed' + parsedData. NO polling
+  for paste. Only the upload path may need usePollUntil (unconfirmed live — never actually
+  observed non-'analyzed' — kept as a defensive fallback since upload shares the resume pipeline).
+- There is NO "not a real job posting" error (no JD_ANALYSIS_FAILED code — that was a sprint-doc
+  guess, doesn't exist). Confirmed live: pasting non-job text just returns status:'analyzed' with a
+  gracefully degraded parse — position "Untitled position", empty requirements/skills/keywords/
+  responsibilities arrays, seniority/remoteType literally "unknown" (a string, not null). Every
+  card component must handle empty arrays and the literal "unknown" string, not just null/undefined.
+  The only real paste-time error is JD_TOO_SHORT.
+- Real JobDescription shape has several fields the sprint doc's guess omitted entirely at the top
+  level (not just nested in parsedData): employmentType, location, salaryMin, salaryMax,
+  salaryCurrency. See features/jobs/job.types.ts.
+- The parsed view is READ-ONLY (unlike resume sections — JDs aren't user-edited). There's also no
+  rename endpoint for job descriptions — JobActions is Delete-only, unlike ResumeCardActions.
+- Requirements group by importance: required → preferred → nice_to_have. Reuse ImportanceBadge
+  (components/ui/importance-badge.tsx, danger/primary/muted) — the same component is meant to
+  reappear in the Sprint 6 keyword table.
+- JobStatusBadge (analyzing/analyzed/failed) is separate from the shared workspace StatusBadge —
+  their status vocabularies don't overlap enough to safely reuse one map.
+- Position/company are optional hints; the analyzer extracts them from the text if omitted.
+- Paste dedupe is invisible (content-hash) — navigating to the existing JD is correct, not an error.

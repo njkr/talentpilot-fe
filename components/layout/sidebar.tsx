@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { useUiStore } from "@/stores/ui.store";
 import { Tooltip } from "@/components/ui/tooltip";
 import { navItems } from "./nav-items";
@@ -52,24 +51,6 @@ export function Sidebar() {
           );
         })}
       </nav>
-
-      <CollapseToggle />
     </aside>
-  );
-}
-
-function CollapseToggle() {
-  const collapsed = useUiStore((s) => s.sidebarCollapsed);
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
-
-  return (
-    <button
-      onClick={toggleSidebar}
-      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      className="flex items-center justify-center gap-2 border-t border-border px-3 py-3 text-sm text-ink-secondary hover:bg-bg hover:text-ink"
-    >
-      {collapsed ? <ChevronRightIcon className="h-4 w-4" /> : <ChevronLeftIcon className="h-4 w-4" />}
-      {!collapsed && "Collapse"}
-    </button>
   );
 }

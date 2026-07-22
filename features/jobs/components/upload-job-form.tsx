@@ -2,16 +2,16 @@
 
 import { useState } from "react";
 import { FileDropzone } from "@/components/ui/file-dropzone";
-import { useUploadResume } from "../hooks/use-upload-resume";
+import { useUploadJob } from "../hooks/use-analyze-job";
 import { ApiError } from "@/lib/api/error";
 import { useUiStore } from "@/stores/ui.store";
 
 const ACCEPTED_MIME_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
 const MAX_BYTES = 10 * 1024 * 1024;
 
-export function UploadDropzone() {
+export function UploadJobForm() {
   const [localError, setLocalError] = useState<string | null>(null);
-  const upload = useUploadResume();
+  const upload = useUploadJob();
   const openUpgradeModal = useUiStore((s) => s.openUpgradeModal);
 
   const handleFile = (file: File) => {
@@ -19,8 +19,6 @@ export function UploadDropzone() {
     upload.mutate(file, {
       onError: (err) => {
         if (!(err instanceof ApiError)) return;
-        // Real codes per the backend's ErrorCode enum — PLAN_LIMIT_REACHED (max resume slots) ->
-        // the shared upgrade modal. The FILE_* codes are the server's real magic-byte/content checks.
         if (err.code === "PLAN_LIMIT_REACHED") {
           openUpgradeModal(err.details);
           return;
@@ -54,8 +52,9 @@ export function UploadDropzone() {
       maxBytes={MAX_BYTES}
       pending={upload.isPending}
       error={localError}
-      label="Drop your resume here, or click to browse"
+      label="Drop the job posting file here, or click to browse"
       helper="PDF or DOCX, up to 10MB"
+      pendingLabel="Uploading and analyzing…"
       onFile={handleFile}
       onValidationError={setLocalError}
     />

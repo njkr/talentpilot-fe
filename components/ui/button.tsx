@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes } from "react";
-import { Slot } from "@radix-ui/react-slot";
+import { Slot, Slottable } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { Spinner } from "./spinner";
@@ -33,7 +33,10 @@ export function Button({ className, variant, size, loading, asChild, children, d
   return (
     <Comp className={cn(buttonVariants({ variant, size }), className)} disabled={disabled || loading} {...props}>
       {loading && <Spinner className="h-4 w-4" />}
-      {children}
+      {/* Slot (asChild) requires exactly one element child to clone onto — Slottable marks which
+          child that is, so the spinner can still render as a sibling instead of breaking Slot's
+          "single child" requirement. A no-op wrapper when asChild is false. */}
+      <Slottable>{children}</Slottable>
     </Comp>
   );
 }
