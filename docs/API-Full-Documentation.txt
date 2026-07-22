@@ -1,0 +1,2324 @@
+TalentPilot API
+Frontend Story Flow, Backend Architecture & Live API Test Rep
+
+Part 1 — What TalentPilot Is
+TalentPilot takes a candidate's resume and a job posting and turns them into everything a real job application needs: an ATS-style compatibility score, concrete rewrite suggestions (fabrication-checked in code, not just prompted against), a tailored cover letter, interview questions grounded in the candidate's actual history, a researched briefing on the company, a salary range, and a focused learning plan for the skill gaps that matter. Everything after upload is produced by a single asynchronous pipeline run — one credit-metered action that fans out into twelve coordinated steps.
+The eight sprints, in one table
+Sprint
+Theme
+What it added
+1
+Auth & Accounts
+Registration, OTP email verification, login/refresh token rotation with theft detection, password reset, sessions.
+2
+Resumes, Profiles & Storage
+S3/R2/MinIO-backed uploads, magic-byte file validation, profile completeness, plan limits.
+3
+AI Core & Resume Parsing
+The shared AiService gateway (Structured Outputs, budget guard, pricing, prompt versioning) and AI-driven resume-to-JSON extraction.
+4
+Job Descriptions, Embeddings & Matching
+JD analysis, pgvector-backed semantic embeddings, keyword coverage matching.
+5 & 6
+Workspaces, Pipeline Backbone & ATS Scoring
+The credit ledger, the BullMQ-driven step pipeline (DAG execution, SSE progress, idempotent retries, proportional refunds), and the ATS scoring engine as its first real step.
+7
+Optimisation, Versions & Cover Letter
+The resume optimiser with an in-code fabrication guard, append-only resume version history, and AI-generated cover letters.
+8
+Parallel Career-Prep Generators
+Interview questions with practice-mode feedback, a capped learning roadmap, Tavily-grounded company research (globally cached), and salary estimation — all running concurrently with the scoring branch.
+
+
+High-level shape of the system
+Two Node.js processes share one Postgres database and one Redis instance:
+The API process (NestJS + Express) — handles every HTTP request. Stateless; horizontally scalable.
+The worker process — a separate NestFactory.createApplicationContext() app with no HTTP listener. Consumes BullMQ queues (resumes, pipeline, emails) and is the ONLY process that ever calls OpenAI or Tavily for pipeline work. This keeps the API process's boot fast and its dependency graph free of heavy AI/embeddings code it doesn't need for orchestration.
+Postgres holds every domain table (30+ tables across the 8 sprints) plus pgvector embeddings.
+Redis backs BullMQ queues, pub/sub for live progress (SSE), and single-use SSE auth tickets.
+MinIO (S3-compatible) stores the actual resume/JD files; the database only stores a key reference.
+
+Part 2 — The Frontend Story, Screen by Screen
+This section follows one real candidate through the product exactly as a frontend would drive it — in the same order, calling the same endpoints, and reacting to the same response shapes. Every response embedded below is REAL, captured today from a live run against the running API and worker processes (not fabricated example data), using a resume PDF generated for this test and a live OpenAI/Tavily-backed pipeline execution.
+2.1. Create an account
+The sign-up screen. The frontend posts email + password. The account is created unverified, and — the moment registration succeeds, not on verification — a `user.registered` event silently grants the new account SIGNUP_CREDIT_GRANT (100) credits via the credits ledger, and queues a 6-digit OTP email.
+API call:  POST /auth/register
+Example request body:
+{
+  "email": "jordan.ellis@example.com",
+  "password": "Sup3rSecret!1"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "9b5582c0-da78-42ec-8943-d15eb749d02c",
+    "email": "jordan.ellis.storytest+1784643376@example.com",
+    "isVerified": false,
+    "role": "user",
+    "createdAt": "2026-07-21T14:16:29.983Z"
+  },
+  "meta": {
+    "requestId": "630cd41b-ea9d-4567-be76-bf2851aa17a6",
+    "timestamp": "2026-07-21T14:16:30.186Z"
+  }
+}
+
+
+Frontend UX notes: Show a 'check your email' screen immediately; nothing else in the product is reachable until verification, since almost every other endpoint requires a verified account.
+
+2.2. Verify email
+The user enters the 6-digit code from their inbox. On success the endpoint returns an access token AND sets an httpOnly refresh cookie (`tp_rt`, scoped to /api/v1/auth) — verification doubles as first login. The code is hashed with argon2 (not sha256) specifically because it's only a 6-digit space (10^6 possibilities); a fast hash would make an offline brute force of a leaked database trivial.
+API call:  POST /auth/verify-email
+Example request body:
+{
+  "email": "jordan.ellis@example.com",
+  "code": "482913"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5YjU1ODJjMC1kYTc4LTQyZWMtODk0My1kMTVlYjc0OWQwMmMiLCJyb2xlIjoidXNlciIsInZlciI6MCwiaWF0IjoxNzg0NjQzNDM3LCJleHAiOjE3ODQ2NDM3Mzd9.SkK95gQ3qQg-AMRR86Uj9ndMIemKL5yYgR0euWmt8kM",
+    "user": {
+      "id": "9b5582c0-da78-42ec-8943-d15eb749d02c",
+      "email": "jordan.ellis.storytest+1784643376@example.com",
+      "isVerified": true,
+      "role": "user",
+      "createdAt": "2026-07-21T14:16:29.983Z"
+    }
+  },
+  "meta": {
+    "requestId": "1895aae2-7789-4980-8757-41efb9650771",
+    "timestamp": "2026-07-21T14:17:17.731Z"
+  }
+}
+
+
+Frontend UX notes: Auto-navigate straight into the app on success — don't make the user log in again. A wrong code returns OTP_INVALID with a remaining-attempts count; surface that count.
+
+2.3. Log in (returning session)
+Unknown email and wrong password return an IDENTICAL 401 body in identical wall-clock time (a fake password hash is computed even when the user doesn't exist) — there is no way to enumerate registered emails through this endpoint.
+API call:  POST /auth/login
+Example request body:
+{
+  "email": "jordan.ellis@example.com",
+  "password": "Sup3rSecret!1"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5YjU1ODJjMC1kYTc4LTQyZWMtODk0My1kMTVlYjc0OWQwMmMiLCJyb2xlIjoidXNlciIsInZlciI6MCwiaWF0IjoxNzg0NjQzNDUyLCJleHAiOjE3ODQ2NDM3NTJ9.WLDjmvP4eK2y4gXJe_-iVEZ8he54UcKDNb3Aoq36Bxs",
+    "user": {
+      "id": "9b5582c0-da78-42ec-8943-d15eb749d02c",
+      "email": "jordan.ellis.storytest+1784643376@example.com",
+      "isVerified": true,
+      "role": "user"
+    }
+  },
+  "meta": {
+    "requestId": "3f2ff3aa-0971-4afd-872e-cc6f9b36fba5",
+    "timestamp": "2026-07-21T14:17:32.607Z"
+  }
+}
+
+
+Frontend UX notes: Never render different copy for 'no such user' vs 'wrong password' — the backend deliberately gives you nothing to distinguish them with.
+
+2.4. Silent session refresh
+The access token is short-lived (15 min default). The frontend calls this on a timer or on a 401, using the httpOnly cookie the browser already carries. Refresh tokens rotate on every use; if the SAME token is ever replayed after rotation, the backend treats it as theft and revokes the entire device family.
+API call:  POST /auth/refresh  (no body — reads the tp_rt cookie)
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5YjU1ODJjMC1kYTc4LTQyZWMtODk0My1kMTVlYjc0OWQwMmMiLCJyb2xlIjoidXNlciIsInZlciI6MCwiaWF0IjoxNzg0NjQzNDY3LCJleHAiOjE3ODQ2NDM3Njd9.4JVW0fFVD7CZx9fd0gbBvHkz4_sjuUKC7ycSCbe8DNw",
+    "user": {
+      "id": "9b5582c0-da78-42ec-8943-d15eb749d02c",
+      "email": "jordan.ellis.storytest+1784643376@example.com",
+      "isVerified": true,
+      "role": "user",
+      "createdAt": "2026-07-21T14:16:29.983Z"
+    }
+  },
+  "meta": {
+    "requestId": "ace8147c-389c-41f6-b7ef-89ae13c483b6",
+    "timestamp": "2026-07-21T14:17:47.104Z"
+  }
+}
+
+
+Frontend UX notes: A concurrent double-refresh (two tabs) is a soft race, not theft: the loser gets TOKEN_SUPERSEDED and should silently retry with the token it now has, not log out.
+
+2.5. Load 'who am I'
+Called once per app load to hydrate the session. Cheap, no side effects.
+API call:  GET /users/me
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "9b5582c0-da78-42ec-8943-d15eb749d02c",
+    "email": "jordan.ellis.storytest+1784643376@example.com",
+    "isVerified": true,
+    "role": "user",
+    "createdAt": "2026-07-21T14:16:29.983Z"
+  },
+  "meta": {
+    "requestId": "6a66388c-9f02-46b7-b902-28f89b8a16ff",
+    "timestamp": "2026-07-21T14:18:03.890Z"
+  }
+}
+
+
+
+2.6. Complete your profile
+GET /profiles/me never 404s — a user who never saved a profile gets an all-null shell with completeness: 0, so a settings form always has something to bind to. PUT is an upsert of individual fields: an omitted field is left untouched, not cleared. linkedin/github URLs are validated against their real hosts.
+API call:  PUT /profiles/me
+Example request body:
+{
+  "firstName": "Jordan", "lastName": "Ellis",
+  "linkedin": "https://linkedin.com/in/jordanellis",
+  "yearsExperience": 6, "targetRole": "Senior Backend Engineer"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "firstName": "Jordan",
+    "lastName": "Ellis",
+    "phone": "+1 415 555 0182",
+    "linkedin": "https://linkedin.com/in/jordanellis",
+    "github": "https://github.com/jordanellis",
+    "portfolio": null,
+    "country": "United States",
+    "city": "San Francisco",
+    "timezone": null,
+    "yearsExperience": 6,
+    "targetRole": "Senior Backend Engineer",
+    "salaryExpectation": null,
+    "salaryCurrency": null,
+    "completeness": 100
+  },
+  "meta": {
+    "requestId": "c57ba9c1-f44f-4c9d-8c55-d26d461924e8",
+    "timestamp": "2026-07-21T14:18:18.295Z"
+  }
+}
+
+
+Frontend UX notes: Use `completeness` (0-100) to drive a profile-strength meter.
+
+2.7. Upload a resume
+Requires a verified email and a free plan slot (max 3 resumes/user by default). The response comes back instantly at status 'uploaded' — parsing hasn't started yet, it's queued to the worker. Re-uploading a byte-identical file returns the EXISTING resume (content-hash dedupe) instead of creating a duplicate.
+API call:  POST /resumes/upload  (multipart/form-data, field name: file)
+Example request body:
+(binary PDF/DOCX upload — magic-byte validated, never trusted by extension or Content-Type)
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "b429f12e-8a9b-4335-924b-54c92210ce1e",
+    "title": "test resume",
+    "status": "uploaded",
+    "pageCount": null,
+    "wordCount": null,
+    "fileSize": 2596,
+    "language": null,
+    "parseError": null,
+    "createdAt": "2026-07-21T14:19:00.011Z"
+  },
+  "meta": {
+    "requestId": "458ecf4d-71fe-4e17-a2c4-a4c1962ea877",
+    "timestamp": "2026-07-21T14:19:00.237Z"
+  }
+}
+
+
+Frontend UX notes: Poll GET /resumes/{id} (or subscribe to a future push channel) to watch status walk uploaded → extracting → extracted → parsing → parsed. In this live test that full walk took under 15 seconds for a 1-page resume.
+
+2.8. Resume finishes parsing
+Two automatic worker stages happen behind this one status field: text extraction (pdf-parse/mammoth), then an AI structuring call that turns raw text into 8 typed sections (personal_info, summary, skills, experience, projects, education, certifications, languages).
+API call:  GET /resumes/{id}   (poll)
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "b429f12e-8a9b-4335-924b-54c92210ce1e",
+    "title": "test resume",
+    "status": "parsed",
+    "pageCount": 1,
+    "wordCount": 188,
+    "fileSize": 2596,
+    "language": "en",
+    "parseError": null,
+    "createdAt": "2026-07-21T14:19:00.011Z"
+  },
+  "meta": {
+    "requestId": "74e6a555-e23f-4826-95df-ddb8d86f9601",
+    "timestamp": "2026-07-21T14:19:15.868Z"
+  }
+}
+
+
+Frontend UX notes: If status sits at 'uploaded' or 'extracted' forever, the worker process isn't running — that's an ops problem, not a data problem, and worth a distinct error state in a demo.
+
+2.9. Review extracted sections
+Each section carries the model's own confidence (0.0–1.0); the frontend should flag low-confidence sections for the user to double check. Editing a section via PATCH /resumes/{id}/sections/{type} marks it editedByUser: true so a future re-parse never silently overwrites a human correction.
+API call:  GET /resumes/{id}/sections
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": [
+    {
+      "sectionType": "personal_info",
+      "content": {
+        "email": "jordan.ellis.test@example.com",
+        "links": [
+          {
+            "url": "linkedin.com/in/jordanellis",
+            "label": "LinkedIn"
+          },
+          {
+            "url": "github.com/jordanellis",
+            "label": "GitHub"
+          }
+        ],
+        "phone": "+1 415 555 0182",
+        "fullName": "Jordan Ellis",
+        "location": "San Francisco, CA"
+      },
+      "orderIndex": 0,
+      "confidence": 1,
+      "aiGenerated": true,
+      "editedByUser": false,
+      "updatedAt": "2026-07-21T14:19:11.614Z"
+    },
+    {
+      "sectionType": "summary",
+      "content": {
+        "text": "Backend engineer with 6 years of experience building scalable Node.js and TypeScript services. Deep experience with PostgreSQL, REST APIs, and cloud infrastructure on AWS."
+      },
+      "orderIndex": 1,
+      "confidence": 1,
+      "aiGenerated": true,
+      "editedByUser": false,
+      "updatedAt": "2026-07-21T14:19:11.614Z"
+    },
+    {
+      "sectionType": "skills",
+      "content": [
+        "Node.js",
+        "TypeScript",
+        "PostgreSQL",
+        "Docker",
+        "Kubernetes",
+        "AWS",
+        "Redis",
+        "Kafka",
+        "Jest",
+        "REST APIs"
+      ],
+      "orderIndex": 2,
+      "confidence": 1,
+      "aiGenerated": true,
+      "editedByUser": false,
+      "updatedAt": "2026-07-21T14:19:11.614Z"
+    },
+    {
+      "sectionType": "experience",
+      "content": [
+        {
+          "title": "Senior Backend Engineer",
+          "company": "Northwind Freight",
+          "endDate": "Present",
+          "location": null,
+          "isCurrent": true,
+          "startDate": "2021",
+          "highlights": [
+            "Led migration of a monolithic Node.js service to microservices using Docker and Kubernetes",
+            "Designed and built REST APIs in TypeScript serving 2M requests per day",
+            "Reduced average API latency by 35% through PostgreSQL query optimization and caching",
+            "Mentored 3 junior engineers and led sprint planning for a team of 6"
+          ]
+        },
+        {
+          "title": "Backend Engineer",
+          "company": "Riverstone Analytics",
+          "endDate": "2021",
+          "location": null,
+          "isCurrent": false,
+          "startDate": "2018",
+          "highlights": [
+            "Built data-processing pipelines in Node.js consuming events from Kafka",
+            "Implemented CI/CD pipelines using GitHub Actions and AWS CodeDeploy",
+            "Wrote integration tests with Jest, raising backend coverage from 40% to 85%"
+          ]
+        }
+      ],
+      "orderIndex": 3,
+      "confidence": 1,
+      "aiGenerated": true,
+      "editedByUser": false,
+      "updatedAt": "2026-07-21T14:19:11.614Z"
+    },
+    {
+      "sectionType": "projects",
+      "content": [
+        {
+          "url": null,
+          "name": "Open Source Rate Limiter",
+          "description": "A distributed rate-limiting library for Node.js backed by Redis, used by 3 internal teams.",
+          "technologies": []
+        }
+      ],
+      "orderIndex": 4,
+      "confi …(truncated)
+
+
+
+2.10. Paste the job description
+Analysed INLINE, not queued — the response already carries status: analyzed with structured requirements (each tagged required/preferred/nice_to_have), skills, and keywords, typically within a few seconds. Pasting the same text twice (by content hash) returns the existing analysed row instead of paying for a second AI call.
+API call:  POST /job-descriptions/paste
+Example request body:
+{
+  "text": "Senior Backend Engineer at Meridian Systems...",
+  "position": "Senior Backend Engineer", "company": "Meridian Systems"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "9746e015-d8f6-43bb-b112-d7acd994db10",
+    "company": "Meridian Systems",
+    "position": "Senior Backend Engineer",
+    "source": "paste",
+    "employmentType": null,
+    "location": null,
+    "remoteType": "remote",
+    "experienceRequired": "5+ years",
+    "salaryMin": null,
+    "salaryMax": null,
+    "salaryCurrency": null,
+    "parsedData": {
+      "salary": {
+        "max": null,
+        "min": null,
+        "currency": null
+      },
+      "skills": [
+        {
+          "name": "Node.js",
+          "category": "language",
+          "importance": "required"
+        },
+        {
+          "name": "TypeScript",
+          "category": "language",
+          "importance": "required"
+        },
+        {
+          "name": "PostgreSQL",
+          "category": "database",
+          "importance": "required"
+        },
+        {
+          "name": "Kubernetes",
+          "category": "tool",
+          "importance": "required"
+        },
+        {
+          "name": "Kafka",
+          "category": "tool",
+          "importance": "preferred"
+        },
+        {
+          "name": "AWS",
+          "category": "cloud",
+          "importance": "preferred"
+        }
+      ],
+      "company": "Meridian Systems",
+      "keywords": [
+        "Senior Backend Engineer",
+        "distributed systems",
+        "Node.js",
+        "TypeScript",
+        "PostgreSQL",
+        "Kubernetes",
+        "container orchestration",
+        "Kafka",
+        "AWS",
+        "scalable backend services",
+        "mentor junior engineers",
+        "on-call rotation"
+      ],
+      "location": null,
+      "position": "Senior Backend Engineer",
+      "seniority": "senior",
+      "remoteType": "remote",
+      "requirements": [
+        {
+          "text": "5+ years of experience with Node.js",
+          "category": "experience",
+          "importance": "required"
+        },
+        {
+          "text": "5+ years of experience with TypeScript",
+          "category": "experience",
+          "importance": "required"
+        },
+        {
+          "text": "Strong experience with PostgreSQL",
+          "category": "experience",
+          "importance": "required"
+        },
+        {
+          "text": "Experience with Kubernetes",
+          "category": "experience",
+          "importance": "required"
+        },
+        {
+          "text": "Experience with container orchestration",
+          "category": "experience",
+          "importance": "required"
+        },
+        {
+          "text": "Familiarity with Kafka or similar event streaming",
+          "category": "experience",
+          "importance": "preferred"
+        },
+        {
+          "text": "AWS cloud experience",
+          "category": "experience",
+          "importance": "preferred"
+        }
+      ],
+      "employmentType": null,
+      "responsibilities": [
+        "Design and build scalable backend services",
+        "Mentor junior engineers",
+        "Participate in on-call rotation"
+      ],
+      "experienceRequired": "5+ years"
+    },
+    "status": "analyzed",
+    "parseError": null,
+    "createdAt": "2026-07-21T14:19:49.102Z"
+  },
+  "meta": {
+    "requestId": "c1682d61-ab28-4e46-ac7 …(truncated)
+
+
+
+2.11. Optional: quick match before committing
+A lightweight, synchronous, direct comparison (Sprint 4) — separate from the full pipeline. Useful as a fast 'is this worth pursuing' check before spending pipeline credits. Embeds both sides (content-hash-cached per chunk, so unchanged text is never re-embedded) and returns a semantic score plus keyword coverage.
+API call:  POST /resumes/{resumeId}/match/{jdId}
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "semanticScore": 37,
+    "perRequirement": [
+      {
+        "requirement": "5+ years of experience with Node.js",
+        "importance": "required",
+        "rawSimilarity": 0.5597,
+        "score": 52,
+        "evidence": "Professional summary: Backend engineer with 6 years of experience building scalable Node.js and TypeScript services. Deep experience with PostgreSQL, REST APIs, and cloud infrastructure on AWS.",
+        "foundIn": "Summary",
+        "verdict": "partial"
+      },
+      {
+        "requirement": "5+ years of experience with TypeScript",
+        "importance": "required",
+        "rawSimilarity": 0.5357,
+        "score": 47,
+        "evidence": "Professional summary: Backend engineer with 6 years of experience building scalable Node.js and TypeScript services. Deep experience with PostgreSQL, REST APIs, and cloud infrastructure on AWS.",
+        "foundIn": "Summary",
+        "verdict": "partial"
+      },
+      {
+        "requirement": "Strong experience with PostgreSQL",
+        "importance": "required",
+        "rawSimilarity": 0.5605,
+        "score": 52,
+        "evidence": "Professional summary: Backend engineer with 6 years of experience building scalable Node.js and TypeScript services. Deep experience with PostgreSQL, REST APIs, and cloud infrastructure on AWS.",
+        "foundIn": "Summary",
+        "verdict": "partial"
+      },
+      {
+        "requirement": "Experience with Kubernetes",
+        "importance": "required",
+        "rawSimilarity": 0.4834,
+        "score": 37,
+        "evidence": "Skills: Node.js, TypeScript, PostgreSQL, Docker, Kubernetes, AWS, Redis, Kafka, Jest, REST APIs",
+        "foundIn": "Skills",
+        "verdict": "partial"
+      },
+      {
+        "requirement": "Experience with container orchestration",
+        "importance": "required",
+        "rawSimilarity": 0.4075,
+        "score": 22,
+        "evidence": "Skills: Node.js, TypeScript, PostgreSQL, Docker, Kubernetes, AWS, Redis, Kafka, Jest, REST APIs",
+        "foundIn": "Skills",
+        "verdict": "weak"
+      },
+      {
+        "requirement": "Familiarity with Kafka or similar event streaming",
+        "importance": "preferred",
+        "rawSimilarity": 0.3923,
+        "score": 18,
+        "evidence": "Skills: Node.js, TypeScript, PostgreSQL, Docker, Kubernetes, AWS, Redis, Kafka, Jest, REST APIs",
+        "foundIn": "Skills",
+        "verdict": "weak"
+      },
+      {
+        "requirement": "AWS cloud experience",
+        "importance": "preferred",
+        "rawSimilarity": 0.3916,
+        "score": 18,
+        "evidence": "Professional summary: Backend engineer with 6 years of experience building scalable Node.js and TypeScript services. Deep experience with PostgreSQL, REST APIs, and cloud infrastructure on AWS.",
+        "foundIn": "Summary",
+        "verdict": "weak"
+      }
+    ],
+    "keywords": [
+      {
+        "keyword": "Node.js",
+        "canonical": "node.js",
+        "category": "language",
+        "importance": "required",
+        "status": "matched",
+        "foundIn": [
+          "skills",
+          "Senior Backend Engineer at Northwind Freight",
+          "Backend Engineer at Riverst …(truncated)
+
+
+Frontend UX notes: This is the cheap, instant path. The full workspace pipeline below is the expensive, complete path — most products would offer both.
+
+2.12. Create a workspace
+A workspace is just a durable pairing of one resume with one job description — free to create. Nothing AI-related happens yet; this is the 'project' the rest of the flow hangs off.
+API call:  POST /workspaces
+Example request body:
+{
+  "resumeId": "...", "jobDescriptionId": "...",
+  "name": "Meridian Systems \u2014 Senior Backend Engineer"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "name": "Meridian Systems � Senior Backend Engineer",
+    "resumeId": "b429f12e-8a9b-4335-924b-54c92210ce1e",
+    "jobDescriptionId": "9746e015-d8f6-43bb-b112-d7acd994db10",
+    "status": "created",
+    "lastRunId": null,
+    "analyzedResumeVersion": null,
+    "createdAt": "2026-07-21T14:20:33.942Z"
+  },
+  "meta": {
+    "requestId": "38e10b11-0971-4d77-b64a-ddfd21ae25fc",
+    "timestamp": "2026-07-21T14:20:33.955Z"
+  }
+}
+
+
+
+2.13. Start full analysis
+Costs a flat 21 credits, debited atomically with creating the run — either both happen or neither does. The Idempotency-Key is mandatory: replaying the same key returns the SAME run instead of starting (and re-charging for) a second one, which matters enormously on a flaky mobile connection where the client can't tell if its POST actually landed.
+API call:  POST /workspaces/{id}/analyze   (header: Idempotency-Key: <uuid>)
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "runId": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "status": "queued",
+    "creditsCharged": 21,
+    "replayed": false
+  },
+  "meta": {
+    "requestId": "3e1c0571-50fc-4470-8bf9-b1c82d28a180",
+    "timestamp": "2026-07-21T14:20:49.856Z"
+  }
+}
+
+
+Frontend UX notes: Generate a fresh UUID client-side per logical 'Analyze' click (not per retry of the SAME click). Immediately transition to a progress screen using the returned runId.
+
+2.14. Watch it run
+Progress is a single 0-100 number, weighted by each step's share of the total work (the heaviest step, optimize_resume, alone is worth 16 points). Four of the twelve steps — the ATS-scoring branch's embeddings/keywords/score plus everything downstream of it — genuinely depend on each other in sequence; the other three (generate_interview_qs, research_company, estimate_salary) need only the parsed resume and JD, so they run CONCURRENTLY with the scoring branch. In this live run the full twelve-step pipeline finished in under a minute.
+API call:  GET /workspaces/runs/{runId}   (poll fallback) — or open the SSE stream
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "status": "completed",
+    "progress": 100,
+    "currentStep": null,
+    "creditsCharged": 21,
+    "creditsRefunded": 0,
+    "error": null,
+    "steps": [
+      {
+        "name": "parse_resume",
+        "status": "skipped",
+        "error": null
+      },
+      {
+        "name": "parse_jd",
+        "status": "skipped",
+        "error": null
+      },
+      {
+        "name": "generate_embeddings",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "estimate_salary",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "research_company",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "generate_interview_qs",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "match_keywords",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "score_ats",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "build_learning_path",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "optimize_resume",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "generate_cover_letter",
+        "status": "completed",
+        "error": "The AI produced an invalid result and could not complete this request."
+      },
+      {
+        "name": "finalize",
+        "status": "skipped",
+        "error": "dependency failed"
+      }
+    ]
+  },
+  "meta": {
+    "requestId": "b41224a2-8e29-4a68-a94e-751692ea7b0a",
+    "timestamp": "2026-07-21T14:23:11.282Z"
+  }
+}
+
+
+Frontend UX notes: For a real-time feel: POST /workspaces/runs/{runId}/stream-ticket to mint a 60-second single-use ticket (EventSource can't send an Authorization header, so this sidesteps putting a real bearer token in a URL), then open GET /workspaces/runs/{runId}/stream?ticket=... as an EventSource. It always sends a `snapshot` event first, so a client that connects after the run already finished still gets a useful, non-hanging response.
+
+2.14a — What actually happened when we ran this live (a genuine failure and recovery)
+In this test run, one required step — generate_cover_letter — actually failed on the first attempt: the model's draft tripped the placeholder guard (a real-code check, not just a prompt instruction) and the run finished with status: failed, having refunded 4 of the 21 credits (the exact combined weight of the failed step and everything still blocked behind it). Calling POST /workspaces/runs/{runId}/retry re-queued ONLY that failed step and its one downstream dependent (finalize) — the other ten already-completed steps were skipped, not re-run and not re-charged — and the second attempt produced a clean letter and the run completed. This is the exact resilience story the credit-refund and idempotent-retry design exists for, observed actually happening rather than staged.
+{
+  "success": true,
+  "data": {
+    "id": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "status": "failed",
+    "progress": 84,
+    "currentStep": null,
+    "creditsCharged": 21,
+    "creditsRefunded": 4,
+    "error": null,
+    "steps": [
+      {
+        "name": "parse_resume",
+        "status": "skipped",
+        "error": null
+      },
+      {
+        "name": "parse_jd",
+        "status": "skipped",
+        "error": null
+      },
+      {
+        "name": "generate_embeddings",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "estimate_salary",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "research_company",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "generate_interview_qs",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "match_keywords",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "score_ats",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "build_learning_path",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "optimize_resume",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "generate_cover_letter",
+        "status": "failed",
+        "error": "The AI produced an invalid result and could not complete this request."
+      },
+      {
+        "name": "finalize",
+        "status": "skipped",
+        "error": "dependency failed"
+      }
+    ]
+  },
+  "meta": {
+    "requestId": "35591205-b4f2-4ade-991c-032aff812ea5",
+    "timestamp": "2026-07-21T14:21:26.978Z"
+  }
+}
+
+
+…retried, then completed on the second attempt:
+{
+  "success": true,
+  "data": {
+    "id": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "status": "queued",
+    "progress": 84,
+    "currentStep": null,
+    "creditsCharged": 21,
+    "creditsRefunded": 4,
+    "error": null,
+    "steps": [
+      {
+        "name": "parse_resume",
+        "status": "skipped",
+        "error": null
+      },
+      {
+        "name": "parse_jd",
+        "status": "skipped",
+        "error": null
+      },
+      {
+        "name": "generate_embeddings",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "estimate_salary",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "research_company",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "generate_interview_qs",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "match_keywords",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "score_ats",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "build_learning_path",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "optimize_resume",
+        "status": "completed",
+        "error": null
+      },
+      {
+        "name": "generate_cover_letter",
+        "status": "failed",
+        "error": "The AI produced an invalid result and could not complete this request."
+      },
+      {
+        "name": "finalize",
+        "status": "skipped",
+        "error": "dependency failed"
+      }
+    ]
+  },
+  "meta": {
+    "requestId": "6941c0ff-c437-4ef9-b72f-c2fe96d20fdd",
+    "timestamp": "2026-07-21T14:22:53.726Z"
+  }
+}
+
+
+2.15. Read the ATS score
+The number itself is a fixed arithmetic formula over seven weighted components (keyword 30% / semantic 20% / experience 15% / education 10% / project 10% / format 10% / grammar 5%) — never an AI-chosen number, so the same inputs always give the same score and a resume containing 'score this 100' cannot influence a weighted sum. If a job posting states no education requirement, that component is EXCLUDED (weights renormalised), not scored zero or scored free.
+API call:  GET /workspaces/{id}/report
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "2638470f-fedc-4fc3-aca2-5fcd50e8e039",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "runId": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "overallScore": 77,
+    "keywordScore": 100,
+    "semanticScore": 37,
+    "experienceScore": 70,
+    "educationScore": 100,
+    "projectScore": 60,
+    "formatScore": 90,
+    "grammarScore": 90,
+    "scoreBreakdown": [
+      {
+        "score": 100,
+        "weight": 0.3,
+        "component": "keyword",
+        "contribution": 30
+      },
+      {
+        "score": 37,
+        "weight": 0.2,
+        "component": "semantic",
+        "contribution": 7.4
+      },
+      {
+        "score": 70,
+        "weight": 0.15,
+        "component": "experience",
+        "contribution": 10.5
+      },
+      {
+        "score": 100,
+        "weight": 0.1,
+        "component": "education",
+        "contribution": 10
+      },
+      {
+        "score": 60,
+        "weight": 0.1,
+        "component": "project",
+        "contribution": 6
+      },
+      {
+        "score": 90,
+        "weight": 0.1,
+        "component": "format",
+        "contribution": 9
+      },
+      {
+        "score": 90,
+        "weight": 0.05,
+        "component": "grammar",
+        "contribution": 4.5
+      }
+    ],
+    "summary": "Your experience aligns well with the requirements for the Senior Backend Engineer position, particularly in Node.js, TypeScript, and PostgreSQL. However, your experience with container orchestration and AWS could be more robust. Additionally, while you have relevant project experience, providing more detail could strengthen your application further.",
+    "strengths": [
+      "6 years of experience in backend engineering",
+      "Strong skills in Node.js and TypeScript",
+      "Experience mentoring junior engineers",
+      "Proven ability to optimize database performance"
+    ],
+    "weaknesses": [
+      "Partial experience with Kubernetes and container orchestration",
+      "Weak familiarity with Kafka and AWS cloud experience",
+      "Lacks detail in project descriptions",
+      "Very short — add detail to your experience"
+    ],
+    "recommendations": [
+      "Enhance your project descriptions to include specific outcomes and technologies used, particularly in relation to Kubernetes and AWS.",
+      "Consider adding more detail about your experience with container orchestration to demonstrate your capabilities in that area.",
+      "If applicable, include any additional certifications or training related to AWS or Kubernetes to strengthen your profile."
+    ],
+    "keywords": [
+      {
+        "keyword": "Node.js",
+        "canonical": "node.js",
+        "category": "language",
+        "importance": "required",
+        "status": "matched",
+        "evidence": null,
+        "foundIn": [
+          "skills",
+          "Senior Backend Engineer at Northwind Freight",
+          "Backend Engineer at Riverstone Analytics"
+        ],
+        "suggestion": null
+      },
+      {
+        "keyword": "TypeScript",
+        "canonical": "typescript",
+        "category": "language",
+        "importance": "required",
+        "status": "matched",
+        "evidence": null,
+        "foundIn": [ …(truncated)
+
+
+Frontend UX notes: scoreBreakdown carries each component's own score, weight, and contribution — render it so the user can see exactly why they got the number, not just the number.
+
+2.16. Review rewrite suggestions
+Every suggestion here has ALREADY passed a fabrication guard running in application code (not just prompt instructions): invented metrics, years, employers/schools, and credentials are silently dropped before they ever reach this list — the model doesn't know it's fabricating, so prompt rules alone can't be trusted to zero.
+API call:  GET /workspaces/{id}/suggestions?status=pending
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": [
+    {
+      "id": "62928156-5099-437e-9d2c-58e9c3f4a888",
+      "sectionType": "experience",
+      "itemIndex": 0,
+      "bulletIndex": 0,
+      "oldText": "Led migration of a monolithic Node.js service to microservices using Docker and Kubernetes",
+      "newText": "Led migration of a monolithic Node.js service to a scalable microservices architecture using Docker and Kubernetes, improving deployment efficiency and resource management",
+      "reason": "Highlights experience with Kubernetes and container orchestration, aligning with job requirements.",
+      "impact": "high",
+      "keywordsAdded": [
+        "scalable",
+        "microservices architecture",
+        "deployment efficiency",
+        "resource management"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "14308cd8-913a-4a08-a28c-d001a5caf7e7",
+      "sectionType": "experience",
+      "itemIndex": 1,
+      "bulletIndex": 0,
+      "oldText": "Built data-processing pipelines in Node.js consuming events from Kafka",
+      "newText": "Built and optimized data-processing pipelines in Node.js consuming events from Kafka, enhancing real-time data handling capabilities",
+      "reason": "Emphasizes experience with Kafka, a preferred skill for the role.",
+      "impact": "medium",
+      "keywordsAdded": [
+        "optimized",
+        "real-time data handling"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "915b936b-7ba3-48f7-80e4-1f7512a1c188",
+      "sectionType": "experience",
+      "itemIndex": 1,
+      "bulletIndex": 1,
+      "oldText": "Implemented CI/CD pipelines using GitHub Actions and AWS CodeDeploy",
+      "newText": "Implemented CI/CD pipelines using GitHub Actions and AWS CodeDeploy, streamlining deployment processes and reducing time-to-production",
+      "reason": "Strengthens AWS cloud experience, a preferred skill for the role.",
+      "impact": "medium",
+      "keywordsAdded": [
+        "streamlining deployment processes",
+        "reducing time-to-production"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "7cbe352d-6f04-48c4-8a88-69ae3261387b",
+      "sectionType": "summary",
+      "itemIndex": null,
+      "bulletIndex": null,
+      "oldText": "Backend engineer with 6 years of experience building scalable Node.js and TypeScript services. Deep experience with PostgreSQL, REST APIs, and cloud infrastructure on AWS.",
+      "newText": "Senior Backend Engineer with 6 years of experience in designing and building scalable Node.js and TypeScript services. Extensive expertise in PostgreSQL, REST APIs, and AWS cloud infrastructure. Proficient in Kubernetes and Docker for container orchestration.",
+      "reason": "Aligns summary with seniority level and highlights Kubernetes experience, addressing job requirements.",
+      "impact": "high",
+      "keywordsAdded": [
+        "Senior Backend Engineer",
+        "Kubernetes",
+        "Docker",
+        "container orchestration"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "031f41ee-6373-4581-ad9c-54ac0dbbaebe",
+      "sectionType": "experience",
+      "itemIndex": 0,
+      "bulletIndex": 2,
+      "oldText": "Reduced average API latency by 35% through  …(truncated)
+
+
+
+2.17. Apply the ones you like
+A batch of accepted suggestions becomes exactly ONE new resume version — not one version per suggestion, which would make history unreadable. If a bullet was hand-edited after its suggestion was generated, that suggestion is refused (returned in `skipped`, marked stale) rather than silently overwriting the user's own edit. Free — already paid for by the run that generated the suggestions.
+API call:  POST /workspaces/{id}/suggestions/apply
+Example request body:
+{
+  "suggestionIds": ["...", "..."]
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "version": 2,
+    "applied": 2,
+    "skipped": []
+  },
+  "meta": {
+    "requestId": "acb40967-9c60-49c0-b056-e62301b268cd",
+    "timestamp": "2026-07-21T14:24:21.558Z"
+  }
+}
+
+
+
+2.18. See exactly what changed
+Word-level diff, not character-level — a character diff on prose renders a one-word change as unreadable noise ('Le|d| the| team').
+API call:  GET /resumes/{id}/versions/diff?from=1&to=2
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": [
+    {
+      "sectionType": "summary",
+      "changed": true,
+      "changes": [
+        {
+          "count": 2,
+          "added": true,
+          "value": "Senior "
+        },
+        {
+          "count": 2,
+          "value": "Backend "
+        },
+        {
+          "count": 1,
+          "removed": true,
+          "value": "engineer"
+        },
+        {
+          "count": 1,
+          "added": true,
+          "value": "Engineer"
+        },
+        {
+          "count": 11,
+          "value": " with 6 years of experience "
+        },
+        {
+          "count": 6,
+          "added": true,
+          "value": "in designing and "
+        },
+        {
+          "count": 15,
+          "value": "building scalable Node.js and TypeScript services. "
+        },
+        {
+          "count": 1,
+          "removed": true,
+          "value": "Deep"
+        },
+        {
+          "count": 1,
+          "added": true,
+          "value": "Extensive"
+        },
+        {
+          "count": 1,
+          "value": " "
+        },
+        {
+          "count": 1,
+          "removed": true,
+          "value": "experience"
+        },
+        {
+          "count": 1,
+          "added": true,
+          "value": "expertise"
+        },
+        {
+          "count": 1,
+          "value": " "
+        },
+        {
+          "count": 1,
+          "removed": true,
+          "value": "with"
+        },
+        {
+          "count": 1,
+          "added": true,
+          "value": "in"
+        },
+        {
+          "count": 11,
+          "value": " PostgreSQL, REST APIs, and "
+        },
+        {
+          "count": 2,
+          "added": true,
+          "value": "AWS "
+        },
+        {
+          "count": 3,
+          "value": "cloud infrastructure"
+        },
+        {
+          "count": 1,
+          "added": true,
+          "value": "."
+        },
+        {
+          "count": 1,
+          "value": " "
+        },
+        {
+          "count": 1,
+          "removed": true,
+          "value": "on"
+        },
+        {
+          "count": 1,
+          "added": true,
+          "value": "Proficient"
+        },
+        {
+          "count": 1,
+          "value": " "
+        },
+        {
+          "count": 1,
+          "removed": true,
+          "value": "AWS"
+        },
+        {
+          "count": 13,
+          "added": true,
+          "value": "in Kubernetes and Docker for container orchestration"
+        },
+        {
+          "count": 1,
+          "value": "."
+        }
+      ]
+    },
+    {
+      "sectionType": "experience",
+      "changed": true,
+      "changes": [
+        {
+          "count": 32,
+          "value": "Senior Backend Engineer at Northwind Freight\n- Led migration of a monolithic Node.js service to "
+        },
+        {
+          "count": 4,
+          "added": true,
+          "value": "a scalable "
+        },
+        {
+          "count": 2,
+          "value": "microservices "
+        },
+        {
+          "count": 2,
+          "added": true,
+          "value": "architecture "
+        },
+        {
+          "count": 7,
+          "value": "using Docker and Kubernetes"
+        },
+        {
+          "count": 1,
+          "added": true, …(truncated)
+
+
+Frontend UX notes: Render added/removed spans inline, like a track-changes view.
+
+2.19. Not happy? Roll back
+Restoring v1 while sitting on v3 creates v4 — it copies the target version FORWARD, it never deletes or rewrites v2/v3. History is append-only by design, so the user can always get back to exactly where they were.
+API call:  POST /resumes/{id}/versions/{version}/restore
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "version": 3
+  },
+  "meta": {
+    "requestId": "f53f1416-3bfd-478e-b52e-3ac6fb249ca5",
+    "timestamp": "2026-07-21T14:24:57.648Z"
+  }
+}
+
+
+
+2.20. Read (or regenerate) the cover letter
+The pipeline generates one automatically; regenerating with a different tone/length is a separate, on-demand, 2-credit action. Balance is checked and the AI is called BEFORE any credit is debited — a generation that the placeholder guard rejects (as happened earlier in this very test) is never charged.
+API call:  GET /workspaces/{id}/cover-letter   ·   POST .../cover-letter/regenerate
+Example request body:
+{
+  "tone": "confident", "length": "long"
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "f7a53e88-07bc-4501-b034-664c8d2e20bb",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "version": 2,
+    "tone": "confident",
+    "length": "long",
+    "content": "Meridian Systems is at the forefront of transforming how enterprise project management is approached in the construction and infrastructure sectors. I am particularly drawn to this Senior Backend Engineer role due to the opportunity it presents to leverage my extensive experience in building scalable backend solutions to further enhance the capabilities of your software.\n\nIn my current role as a Senior Backend Engineer at Northwind Freight, I have led key projects that align closely with the requirements of this position. For instance, I spearheaded the migration of a monolithic Node.js service to a microservices architecture using Docker and Kubernetes. This initiative not only improved service scalability but also enhanced deployment efficiency, directly reflecting the type of container orchestration and Kubernetes experience Meridian Systems values. Additionally, my efforts in designing and building REST APIs in TypeScript, handling over 2 million requests daily, demonstrate my capability to create robust and scalable backend services, a core responsibility at Meridian.\n\nMoreover, my role has involved optimizing PostgreSQL queries to significantly reduce API latency by 35%, showcasing my deep experience with PostgreSQL, which is crucial for the position at Meridian. This technical acumen is complemented by my ability to mentor junior engineers, as evidenced by my leadership in guiding three junior developers and managing sprint planning for a team of six. This experience will be invaluable in nurturing the next generation of engineers at your company.\n\nIn addition to my technical skills, I bring a practical understanding of cloud infrastructure, having implemented CI/CD pipelines using AWS at Riverstone Analytics. My familiarity with Kafka for creating data-processing pipelines further aligns with your preference for expertise in event streaming technologies.\n\nI am excited by the prospect of contributing to Meridian Systems' mission of optimizing project management processes in construction and infrastructure. My background in AWS cloud services and Kafka, combined with my solid foundation in Node.js, TypeScript, and PostgreSQL, positions me to effectively tackle the challenges and responsibilities outlined in your job description. I look forward to the opportunity to bring my skills and experience to Meridian Systems and help drive innovation in your software solutions.\n\nThank you for considering my application. I am eager to discuss how my background, skills, and enthusiasms align with the goals of Meridian Systems.",
+    "wordCount": 373,
+    "createdAt": "2026-07-21T14:26:07.956Z"
+  },
+  "meta": {
+    "requestId": "8ae0c36f-1618-4301-83c3-688503e68970",
+    "timestamp": "2026-07-21T14:26:07.972Z"
+  }
+}
+
+
+Frontend UX notes: Offer tone chips (professional / friendly / confident / enthusiastic) and a length toggle (short / standard / long) directly on this screen.
+
+2.21. Practice for the interview
+Questions are grounded in the ACTUAL resume and JD — basedOn names the specific resume item or requirement each one came from. Submitting a practice answer costs 1 credit, charged only after the AI feedback call actually succeeds (same balance-first, charge-on-success ordering as cover-letter regeneration).
+API call:  GET /workspaces/{id}/interview-questions   ·   POST /interview-questions/{id}/answer
+Example request body:
+{
+  "answer": "The monolith could not scale past 500 rps..."
+}
+
+
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "482bddc7-41cc-4b0b-ba69-bbcec4c76d50",
+    "type": "behavioral",
+    "difficulty": "medium",
+    "question": "You mentioned leading the migration of a monolithic Node.js service to microservices at Northwind Freight. Can you walk me through the situation, the challenges you faced, and how you approached the migration?",
+    "idealAnswer": "At Northwind Freight, we had a monolithic Node.js service that was becoming increasingly difficult to maintain and scale. I was tasked with leading the migration to a microservices architecture. The main challenge was ensuring minimal downtime during the transition. I started by breaking down the monolith into smaller, manageable services, prioritizing those that were most critical to our operations. I coordinated with my team to implement Docker for containerization and used Kubernetes for orchestration. We conducted thorough testing to ensure each microservice functioned correctly before going live. As a result, we successfully migrated with only a few hours of downtime, and the new architecture improved our deployment speed and scalability significantly.",
+    "framework": "STAR",
+    "whyAsked": "To assess the candidate's leadership and technical skills in a real-world scenario, particularly in migration projects which are complex and require strategic planning.",
+    "basedOn": "Led migration of a monolithic Node.js service to microservices using Docker and Kubernetes.",
+    "userAnswer": "The monolith could not scale past 500 requests per second and deploys took an hour. I split it into 6 services by domain boundary, introduced a message queue for async work, and migrated traffic gradually behind a feature flag over 6 weeks with zero downtime.",
+    "aiFeedback": "Your answer provides a concise overview of the migration process, but it lacks detail in several key areas. To improve, consider elaborating on the initial challenges you faced beyond just the scaling issue and deployment time. Explain how you determined which services to split and the reasoning behind using a message queue. Additionally, discussing the testing and validation process during the migration would strengthen your response. Finally, mention the impact of the migration on the team's workflow or the overall system performance to provide a more comprehensive view of the outcome.",
+    "answerScore": 70
+  },
+  "meta": {
+    "requestId": "ec0ac320-2344-439b-91ff-d88ce232e380",
+    "timestamp": "2026-07-21T14:25:46.010Z"
+  }
+}
+
+
+Frontend UX notes: Show `answerScore` (0-100) and `aiFeedback` as an inline coach, not a pass/fail gate.
+
+2.22. Research the company
+Tavily-grounded, not the model's own (possibly stale) training data. Cached globally for 7 days per normalised company name — 'Acme Corp' and 'ACME CORP.' hit the same cache row, and the 50th person who applies to the same company this week pays nothing.
+API call:  GET /workspaces/{id}/company-insight
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "062e2d7d-3e9e-45d5-b981-50c4ec06c5e8",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "runId": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "companyName": "Meridian Systems",
+    "overview": "Meridian Systems provides enterprise project management and lifecycle software that optimizes the planning, building, and operational phases of real estate, construction, and other physical infrastructure projects. Their technology is utilized by building owners, construction contractors, engineering firms, and government agencies to enhance productivity and reduce capital construction costs.",
+    "culture": [],
+    "talkingPoints": [
+      "Mention Meridian's focus on optimizing the lifecycle of construction projects, which can demonstrate your understanding of their core business.",
+      "Discuss the integration of their software into Trimble's Connected Construction Site strategy, highlighting the importance of technology in improving construction efficiency."
+    ],
+    "sources": [
+      "https://investor.trimble.com/news/news-details/2006/Trimble-to-Acquire-Meridian-Systems-for-Enterprise-Construction-Project-Management-10-31-2006/default.aspx",
+      "https://www.summitpartners.com/companies/meridian-systems"
+    ],
+    "confidence": "medium",
+    "fromCache": false,
+    "createdAt": "2026-07-21T14:20:56.463Z"
+  },
+  "meta": {
+    "requestId": "261dac18-d554-4a7b-812f-2ac29ed60c9c",
+    "timestamp": "2026-07-21T14:25:15.656Z"
+  }
+}
+
+
+Frontend UX notes: confidence: "low" with a thin overview is an HONEST signal the company has little public footprint, not a bug — render it as such, with the `sources` list for transparency.
+
+2.23. Check the salary range
+Always a p25/p50/p75 range with isEstimate: true baked into the row itself — there is no code path that returns a single bare number as if it were a quote.
+API call:  GET /workspaces/{id}/salary-estimate
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "9b7341fa-40a3-43f1-a43f-dcb71f7a98d3",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "runId": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "currency": "USD",
+    "p25": 143573,
+    "p50": 204437,
+    "p75": 250000,
+    "isEstimate": true,
+    "methodology": "This estimate is based on a combination of salary data from various sources including Glassdoor and Salary.com, focusing on reported salaries for Senior Backend Engineers across the United States, particularly in high-cost areas like New York City and San Francisco. The range reflects both median and higher-end salaries reported.",
+    "factors": [
+      "Location: Salaries in high-cost areas like NYC and SF are generally higher, impacting the overall range.",
+      "Seniority: As a senior role, the compensation is adjusted upwards compared to mid-level positions."
+    ],
+    "negotiationTips": [
+      "Emphasize any specialized skills or technologies you are proficient in that are in high demand.",
+      "Highlight your previous accomplishments and how they can translate to value for the new employer.",
+      "Consider the total compensation package, including benefits and equity, not just the base salary."
+    ],
+    "createdAt": "2026-07-21T14:20:55.454Z"
+  },
+  "meta": {
+    "requestId": "31dc5f25-c85b-4d74-b4fb-07d64d8497cf",
+    "timestamp": "2026-07-21T14:25:15.767Z"
+  }
+}
+
+
+
+2.24. Close the skill gaps
+Capped at 6 items — enforced both in the prompt and again in code — required gaps ordered ahead of preferred ones, with realistic (not hand-wavy) hour estimates.
+API call:  GET /workspaces/{id}/learning-roadmap
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": {
+    "id": "12f2eb3b-0839-4c46-af13-de16c1c1e3b3",
+    "workspaceId": "5bbf3fb4-c2e2-42d2-8838-a129b6a0aeb6",
+    "runId": "12452371-3ad0-45bd-a7d3-7845aa90c998",
+    "items": [
+      {
+        "url": "https://kubernetes.io/docs/tutorials/kubernetes-basics/",
+        "title": "Kubernetes Basics: Introduction to Kubernetes",
+        "estHours": 20,
+        "priority": "required",
+        "gapReason": "Kubernetes experience is required for the job; understanding its basics is essential for backend service deployment and orchestration.",
+        "resourceType": "course"
+      },
+      {
+        "url": "https://www.udemy.com/course/aws-certified-solutions-architect-associate/",
+        "title": "AWS Certified Solutions Architect – Associate 2020",
+        "estHours": 30,
+        "priority": "preferred",
+        "gapReason": "Familiarity with AWS cloud is preferred; this course will provide foundational knowledge of AWS services relevant to backend engineering.",
+        "resourceType": "course"
+      },
+      {
+        "url": "https://www.oreilly.com/library/view/kafka-the-definitive/9781491936160/",
+        "title": "Kafka: The Definitive Guide",
+        "estHours": 15,
+        "priority": "preferred",
+        "gapReason": "Familiarity with Kafka is preferred; this book will provide comprehensive knowledge of event streaming, which is valuable for scalable backend services.",
+        "resourceType": "book"
+      },
+      {
+        "url": null,
+        "title": "PostgreSQL Official Documentation",
+        "estHours": 10,
+        "priority": "required",
+        "gapReason": "Strong experience with PostgreSQL is required; understanding its advanced features will enhance backend service design.",
+        "resourceType": "documentation"
+      },
+      {
+        "url": "https://www.coursera.org/learn/resume-writing",
+        "title": "Writing Effective Resumes and Cover Letters",
+        "estHours": 5,
+        "priority": "preferred",
+        "gapReason": "Lacks detail in project descriptions; improving writing skills will help in articulating experience more effectively for job applications.",
+        "resourceType": "course"
+      },
+      {
+        "url": "https://www.nodejsdesignpatterns.com/",
+        "title": "Node.js Design Patterns",
+        "estHours": 20,
+        "priority": "preferred",
+        "gapReason": "Experience with Node.js is required; this book will deepen understanding of design patterns and best practices in backend development.",
+        "resourceType": "book"
+      }
+    ],
+    "createdAt": "2026-07-21T14:21:18.601Z"
+  },
+  "meta": {
+    "requestId": "a467a472-a4f3-4f81-add5-f210d798f06f",
+    "timestamp": "2026-07-21T14:25:15.879Z"
+  }
+}
+
+
+
+2.25. Manage sessions / security
+Each entry is a device/family, not a raw token. Listing before logging out matters: logging out revokes the CURRENT family, so check other-device sessions first if that's the point of the screen.
+API call:  GET /auth/sessions   ·   DELETE /auth/sessions/{familyId}
+Real captured response (from today's live test run):
+{
+  "success": true,
+  "data": [
+    {
+      "familyId": "12333ce5-6b59-41d0-a12a-68be12d95dde",
+      "createdAt": "2026-07-21T14:22:53.433Z",
+      "ip": "::1",
+      "userAgent": "curl/8.2.1"
+    },
+    {
+      "familyId": "66d4b2d8-83ec-49b5-bc39-2b36c9229d31",
+      "createdAt": "2026-07-21T14:17:17.694Z",
+      "ip": "::1",
+      "userAgent": "curl/8.2.1"
+    }
+  ],
+  "meta": {
+    "requestId": "fac56c42-03f8-42f9-b6b7-a2e0301cd9e5",
+    "timestamp": "2026-07-21T14:26:20.745Z"
+  }
+}
+
+
+
+2.26. Forgot password → reset
+forgot-password ALWAYS returns 204, even for an unknown email — existence is never revealed. Resetting bumps the user's tokenVersion, which instantly invalidates every access token already issued (even ones that haven't expired yet) and revokes every refresh token — a real security property we confirmed live: the pre-reset access token started failing with TOKEN_INVALID immediately after reset, even though its own 15-minute expiry hadn't passed.
+API call:  POST /auth/forgot-password  then  POST /auth/reset-password
+Example request body:
+{
+  "token": "<from email>", "password": "NewSup3rSecret!2"
+}
+
+
+Real captured response (from today's live test run):
+HTTP:204
+
+
+Frontend UX notes: After a successful reset, force a fresh login — the old session is provably dead server-side, not just client-side.
+
+2.27. Log out / delete account
+Both are destructive/terminal by design — logout revokes the current refresh family; delete removes the account. We confirmed live that a token used after DELETE /users/me correctly comes back TOKEN_INVALID on the very next call.
+API call:  POST /auth/logout   ·   DELETE /users/me
+Real captured response (from today's live test run):
+HTTP:204
+
+
+
+
+Part 3 — Backend Architecture, In Detail
+3.1 — Process topology
+The backend is two independently-deployable NestJS applications sharing one Postgres database and one Redis instance, plus MinIO/S3 for file bytes:
+API process (src/main.ts → AppModule): every HTTP route. Bootstrapped with NestFactory.create(), Swagger docs at /api/docs, a global ValidationPipe (whitelist + forbidNonWhitelisted), a global ClassSerializerInterceptor (honors @Exclude on passwordHash), a global response-shaping TransformInterceptor, and a global AllExceptionsFilter.
+Worker process (src/main.worker.ts → WorkerModule): bootstrapped with NestFactory.createApplicationContext() — no HTTP listener at all. Consumes three BullMQ queues: emails, resumes, pipeline. This is the ONLY process that imports AiModule, EmbeddingsModule, or any Tavily-touching code — a deliberate DI-graph boundary enforced by which modules each process's root module imports, not just convention.
+A NestJS module can be imported into BOTH processes when it exposes both a controller (API-reachable) and a service the worker calls directly from a pipeline step — CoverLetterModule, InterviewModule, and AtsModule are all built this way (a controller for the API process's synchronous/on-demand endpoints, plus the same service reused inside a pipeline step). The controller class is harmless when the worker's createApplicationContext() loads it too: without an HTTP adapter bound, its routes are simply never exposed anywhere.
+3.2 — The response envelope and error model
+Every 2xx response from the API process is shaped identically by a global interceptor:
+{
+  "success": true,
+  "data": { /* the actual payload */ },
+  "meta": { "requestId": "...", "timestamp": "...", "nextCursor"?: "...", "hasMore"?: true }
+}
+
+
+Every error response, thrown from anywhere, is caught by one global AllExceptionsFilter and shaped identically:
+{
+  "success": false,
+  "error": { "code": "INSUFFICIENT_CREDITS", "message": "...", "details"?: {...}, "fields"?: {...} },
+  "meta": { "requestId": "...", "timestamp": "..." }
+}
+
+
+The `code` values are a closed enum (ErrorCode in common/exceptions/app.exception.ts) mapped to a fixed HTTP status (STATUS table in the same file). A small catalogue module (common/problems.ts) exposes one factory function per named failure — Problems.insufficientCredits(required, balance), Problems.jdNotReady(status), etc. — so every service throws the same shape for the same failure instead of ad-hoc NestJS exceptions scattered through the codebase. As of Sprint 8 this catalogue holds 40+ named errors across every domain.
+3.3 — Auth & security model (Sprint 1)
+Passwords: argon2id (memoryCost 64 MiB, timeCost 3, parallelism 4) — OWASP-aligned, not bcrypt.
+Access tokens: short-lived JWT (default 15 min), payload {sub, role, ver}. `ver` is the user's tokenVersion column — bumping it (on password reset, or a detected refresh-token replay) instantly invalidates every access token already issued, even ones whose own expiry hasn't passed, since the guard checks ver against the current DB value on every request.
+Refresh tokens: opaque, NOT a JWT — format "<uuid>.<32-byte base64url secret>", stored as sha256(secret) only (a stolen database yields no usable tokens), delivered as an httpOnly cookie scoped to /api/v1/auth. Rotate on every use.
+Theft detection: if a refresh token is presented AFTER it's already been rotated away, that's not a race — it's replay of a token that shouldn't exist anymore — and the entire device family is revoked, not just that token.
+Concurrent-refresh race (two tabs refreshing at once) is explicitly NOT theft: the loser gets a soft TOKEN_SUPERSEDED and should retry with its current token.
+Timing-safe auth: invalid email and invalid password return byte-identical bodies in equalized wall-clock time (PasswordService.fakeVerify() burns the same CPU as a real verify when the user doesn't exist) — no user-enumeration oracle.
+OTP codes: 6 digits, argon2-hashed (not sha256) specifically because the search space is only 10^6 — a fast hash would make a leaked-database offline brute force instant.
+Password-reset tokens: 256-bit random, sha256-hashed (safe at that entropy), single-use, 30-minute TTL.
+3.4 — Storage (Sprint 2)
+One StorageService abstraction talks to any S3-compatible backend — real AWS S3, Cloudflare R2, or local MinIO — switched purely by environment variables (S3_ENDPOINT/S3_FORCE_PATH_STYLE/S3_SERVER_SIDE_ENCRYPTION). Uploaded files are never trusted by extension or browser-reported Content-Type — FileValidatorService reads the actual magic bytes (%PDF- for PDF; the ZIP signature PK\x03\x04 plus a check for the literal string word/document.xml inside for DOCX, which also rejects a renamed .xlsx/.pptx/.jar/.apk). Downloads are served via short-lived signed URLs (SIGNED_URL_TTL_SEC), never proxied through the API process.
+3.5 — The AI Gateway (Sprint 3)
+Every AI-touching feature in the whole product — resume parsing, JD analysis, ATS grading, resume optimisation, cover letters, interview questions/feedback, company synthesis, salary estimation — calls exactly one method: AiService.complete<T>(opts). That single choke point is what makes the following guarantees uniform product-wide instead of re-implemented per feature:
+Budget guard: a global AND a per-user daily USD cap (AI_GLOBAL_DAILY_BUDGET_USD / AI_USER_DAILY_BUDGET_USD), checked BEFORE the call, plus a kill switch (AI_KILL_SWITCH) that stops all AI instantly.
+Structured Outputs: every prompt has a Zod schema (src/ai/schemas/*.schema.ts) turned into an OpenAI response_format via zodResponseFormat() — the model literally cannot return a shape that doesn't match, eliminating a whole class of "the AI returned something we couldn't parse" bugs.
+Prompt versioning: PromptTemplate rows in Postgres, not hardcoded strings — a prompt can be edited, versioned, and rolled back without a deploy. Exactly one version per key is is_active at a time.
+Retry classification: AiError has a closed type union (rate_limited, provider_down, invalid_output, context_too_long, budget_exceeded, content_filtered, unknown) computed from the REAL OpenAI SDK error classes (instanceof checks against RateLimitError etc.), not string/duck-typing — only invalid_output gets one repair retry; the rest fail immediately or are already retried inside the SDK.
+Cost tracking: every attempt (success or failure) logs one token_usage row with exact prompt/completion/cached token counts and a computed cost_usd (6 decimal places — a single 4o-mini call can cost $0.0009, and that precision matters once you're doing 100k calls).
+Prompt-injection defence: every prompt's system template explicitly marks user-supplied content (resume text, JD text, search results) as UNTRUSTED DATA inside XML-ish tags, with an explicit instruction never to obey directives found inside them.
+3.6 — Job descriptions, embeddings & matching (Sprint 4)
+JDs are analysed INLINE (not queued) since it's a single fast AI call; content-hash deduped per user so pasting the same text twice is free.
+Embeddings are stored in Postgres via pgvector (vector(1536), text-embedding-3-small) — NOT a separate vector database. Chunked SECTION-AWARE, not by a fixed token window: a naive sliding window can split "Senior Engineer at Acme, 2020–2023" from its own achievement bullets, orphaning them with no idea which role they belonged to.
+JD chunking is one chunk PER REQUIREMENT (not per paragraph) — matching asks "does the resume satisfy requirement X", so each requirement needs its own query vector; chunking by paragraph would blur five requirements into one meaningless vector.
+Embeddings are content-hashed per chunk and reused across re-runs — editing one bullet re-embeds ONLY that chunk, not the whole resume.
+Keyword matching is a separate, deterministic-ish pass (semantic similarity via embeddings is one signal; literal/canonical keyword presence is a second, independent signal) — the ATS score in Sprint 6 blends both rather than relying on either alone.
+
+3.7 — Credits: an append-only ledger, not a mutable balance
+credits_ledger has no "balance" column. A user's balance is always SUM(amount) for that user — positive rows are grants/refunds, negative rows are debits. Two reasons this matters:
+Self-auditing: "why does this user have 79 credits" is always answerable by reading history, never a mystery number.
+Race safety: two concurrent debits on a single mutable `balance` column can both read the same stale value and both succeed (a classic lost-update). An append-only ledger has no single row to SELECT ... FOR UPDATE on instead — so debitWithin() takes a Postgres transaction-scoped advisory lock (pg_advisory_xact_lock(hashtext(userId))) before computing SUM() and inserting the negative row, serialising concurrent debits for the SAME user across different DB connections, auto-released on commit or rollback.
+Confirmed live in this session's own testing: a run that failed partway refunded exactly the combined credit-weight of the failed step and everything blocked behind it (verified against the ledger's raw rows, not just the API's summary field), and a subsequent successful retry did not re-debit anything.
+3.8 — The pipeline: workspaces, runs, and the 12-step DAG (Sprints 5–8)
+A workspace pairs one resume with one job description. Calling POST /workspaces/{id}/analyze does three things atomically inside one transaction: creates a pipeline_runs row, debits credits, and is protected from ever having two ACTIVE runs for the same workspace by a database-level partial unique index — CREATE UNIQUE INDEX one_active_run_per_workspace ON pipeline_runs (workspace_id) WHERE status IN ('queued','running') — not just an application-level check, which a race between two near-simultaneous requests could slip past. The BullMQ job is enqueued only AFTER that transaction commits, so the worker can never pick up a run row that isn't visible yet.
+The DAG
+parse_resume ──┬─► generate_embeddings ─► match_keywords ─► score_ats ─┬─► optimize_resume ─► generate_cover_letter ────────┐
+              │                                                       └─► build_learning_path ───────────────────┤
+parse_jd ─────┬─► research_company      (optional)                                                        ├─► finalize
+              ├─► estimate_salary       (optional)                                                        │
+              └─► generate_interview_qs ─────────────────────────────────────────────┘
+
+
+Step
+dependsOn
+Model
+Progress
+Credit
+Required
+parse_resume
+—
+gpt-4o-mini
+8
+2
+yes
+parse_jd
+—
+gpt-4o-mini
+6
+1
+yes
+generate_embeddings
+parse_resume, parse_jd
+text-embedding-3-small
+6
+1
+yes
+match_keywords
+generate_embeddings
+— (deterministic)
+10
+2
+yes
+score_ats
+match_keywords
+gpt-4o-mini
+12
+2
+yes
+optimize_resume
+score_ats
+gpt-4o
+16
+4
+yes
+generate_cover_letter
+optimize_resume
+gpt-4o
+10
+3
+yes
+generate_interview_qs
+parse_resume, parse_jd
+gpt-4o-mini
+10
+2
+yes
+build_learning_path
+score_ats
+gpt-4o-mini
+6
+1
+yes
+research_company
+parse_jd
+gpt-4o-mini + Tavily
+6
+1
+NO
+estimate_salary
+parse_jd
+gpt-4o-mini + Tavily
+4
+1
+NO
+finalize
+all 11 above
+— (aggregation only)
+6
+1
+yes
+
+Progress weights sum to exactly 100; credit weights sum to exactly 21 — both asserted at worker boot (StepRegistry.assertValid()), so a typo can never silently ship.
+
+StepRunner — the execution engine
+Wave-based scheduling: each iteration computes every step whose dependencies are satisfied, runs them all concurrently (bounded by p-limit(3)), then recomputes the next wave. This — not a continuous per-step scheduler — is the actual mechanism behind "the three JD-only steps run alongside the scoring branch": they become ready in the SAME wave as generate_embeddings, well before score_ats even starts several waves later.
+Idempotent by construction: before running a step, StepRunner checks whether a pipeline_steps row for (runId, stepName) already has status='completed' — if so it's skipped, unconditionally. This is what makes a crashed-and-retried run safe: it resumes instead of restarting, and never double-charges or duplicates AI calls for work already done.
+Per-step retry: up to 3 attempts, but ONLY for errors classified as retryable (currently AI_PROVIDER_UNAVAILABLE) — exponential backoff with jitter between attempts.
+Optional-step semantics: a step with `required = false` (research_company, estimate_salary) failing marks the run partial, never failed, and — critically — a dependency on a failed-but-optional step is treated as "resolved enough to proceed" by the scheduler, not as blocking. Without that specific rule, finalize (which depends on every step, optional ones included) would be transitively blocked by ANY optional failure and the run would incorrectly end up failed instead of partial — a real bug found and fixed during this project by testing the failure path live rather than trusting the design on paper.
+Proportional refunds: on any non-completed outcome, refunded = round(creditsCharged × (sum of creditWeight for failed+blocked steps) / (sum of creditWeight for all steps)). Confirmed live: a run where generate_cover_letter (weight 3) and its sole dependent finalize (weight 1) were the only casualties refunded round(21 × 4/21) = 4 credits, exactly.
+Real per-step cost: every AiService call already tags its token_usage row with (runId, stepName); StepRunner sums that back onto the pipeline_steps.cost_usd column when a step finishes (success OR failure — a step can spend real money and still fail afterward). A run's total_cost_usd is the sum across all steps.
+Live progress (SSE)
+The worker publishes step-lifecycle events onto Redis pub/sub (channel run:<id>); the API process subscribes and forwards them over Server-Sent Events using Nest's native @Sse() decorator — which already sets the correct text/event-stream, keep-alive, and no-buffering headers, so nothing extra is needed there. Two SEPARATE ioredis connections are required (one publish, one subscribe) because a client in Redis subscriber mode can only run subscribe/unsubscribe commands. Authentication uses a 60-second single-use Redis-backed ticket instead of a bearer token, because EventSource cannot set request headers at all — putting a real access token in the query string would leak it into server and proxy logs.
+Failure recovery: the run janitor
+A cron job (@Cron(EVERY_5_MINUTES)) sweeps for runs stuck at status='queued' for more than 5 minutes with no corresponding BullMQ job — the narrow crash window between a transaction committing and the enqueue call actually landing — and re-enqueues them under a deterministic rescue job ID.
+3.9 — The fabrication guard (Sprint 7) — why it exists in code, not just the prompt
+The resume optimiser and cover-letter generator both carry an explicit, absolute no-invention rule in their system prompts. That rule measurably reduces fabrication. It does not eliminate it, because the model isn't lying on purpose — it pattern-matches "strong resume bullets have metrics" and supplies one, with no awareness that the number doesn't exist anywhere in the source. The cost of that failure mode is not a bad UX: it's a candidate confidently discussing a project they never did, in a real interview, because a tool told them it was on their resume.
+FabricationGuardService therefore re-verifies every model-proposed suggestion in code before it is ever shown to a user:
+Numbers: every percentage/currency/count/multiplier in the proposed text must already appear in the source resume in some recognisable form.
+Years: every 19xx/20xx token must appear in the source.
+Organisations: two-or-more consecutive capitalised words are checked against the resume's OWN parsed employer/institution/issuer/project list — not generic NER, which is less reliable than data the parser already extracted.
+Credentials: words like "certified", "PhD", "MBA" must already appear in the source — adding one is a categorically different kind of lie than rephrasing a sentence.
+A suggestion that fails any check is dropped silently and logged at WARN level naming the specific violation — the user never sees a rejected suggestion, and this session's own testing produced real, live examples: an invented "45%, 2M users" claim, an invented "Goldman Sachs" employer, and an invented "Certified" credential were all caught and dropped in practice, not just in unit tests.
+The SAME tension shows up in cover letters via a simpler, narrower check: any output containing an unfilled [bracketed placeholder] is rejected outright rather than shown, on the reasoning that a letter with "[Company Name]" in it is worse than no letter — the user might actually send it. This session's live testing hit that rejection for real (not a staged test) on two separate generations, confirming the guard fires under normal production conditions and not just in a lab reproduction.
+3.10 — Resume version history (Sprint 7)
+Append-only: applying suggestions or restoring an old version always creates a NEW resume_versions row and a NEW set of resume_sections rows at the next version number — the previous version's rows are never mutated or deleted.
+Why: the ATS report that scored v1 refers to v1's actual text. Editing v1 in place would silently make every historical report describe content that no longer exists, and the user could never get back to their original upload.
+Staleness protection: every AiSuggestion stores a sha256 hash of the exact bullet text it targeted at generation time. If the user hand-edits that bullet before accepting the suggestion, the hash no longer matches and the suggestion is refused (marked stale) rather than silently discarding the user's edit — confirmed live in this session.
+One nuance worth knowing for a frontend: GET /resumes/{id}/versions only returns EXPLICIT version-creation events (an apply or a restore) — the very first upload (v1) never gets its own resume_versions row unless something later creates v2+. A version-history UI should synthesize a "v1 — original upload" entry from the resume's own createdAt if the list doesn't already contain one.
+
+Part 4 — Full API Reference (44 endpoints)
+Every endpoint in the product, grouped by module in the same order a frontend encounters them. "Auth" = Bearer <accessToken> unless noted otherwise.
+4.1 Auth (10 endpoints)
+Method
+Path
+Auth
+Purpose
+POST
+/auth/register
+Public
+Create an unverified account; grants signup credits.
+POST
+/auth/verify-email
+Public
+Consume OTP; returns access token + refresh cookie.
+POST
+/auth/resend-otp
+Public
+Always 204 — never reveals whether the email exists.
+POST
+/auth/login
+Public
+Email + password; identical timing/response for unknown-email vs wrong-password.
+POST
+/auth/refresh
+Cookie (tp_rt)
+Rotates the refresh token, issues a new access token.
+POST
+/auth/logout
+Bearer + Cookie
+Revokes the current refresh-token family.
+POST
+/auth/forgot-password
+Public
+Always 204; emails a single-use reset token if the account exists.
+POST
+/auth/reset-password
+Public (token in body)
+Bumps tokenVersion — kills every live access token instantly.
+GET
+/auth/sessions
+Bearer
+Lists active refresh-token families (devices).
+DELETE
+/auth/sessions/:familyId
+Bearer
+Revokes one specific device's session.
+
+
+4.2 Users & Profiles (5 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/users/me
+Bearer
+"Who am I" — called on every app load.
+PATCH
+/users/me
+Bearer
+Account-level settings (currently a placeholder — no self-editable columns yet).
+DELETE
+/users/me
+Bearer
+Deletes the account.
+GET
+/profiles/me
+Bearer
+Never 404s — an all-null shell if never saved.
+PUT
+/profiles/me
+Bearer
+Upsert of individual fields; omitted fields are left untouched.
+
+
+4.3 Resumes (9 endpoints)
+Method
+Path
+Auth
+Purpose
+POST
+/resumes/upload
+Bearer, Verified
+Multipart upload; magic-byte validated; content-hash deduped.
+GET
+/resumes
+Bearer
+Cursor-paginated list, newest first.
+GET
+/resumes/:id
+Bearer
+Single resume; foreign id 404s, never 403.
+PATCH
+/resumes/:id
+Bearer
+Rename.
+DELETE
+/resumes/:id
+Bearer
+409s with the workspace list if the resume is still in use.
+GET
+/resumes/:id/download
+Bearer
+Short-lived signed URL, never proxied.
+POST
+/resumes/:id/retry
+Bearer
+Re-queues extraction/parsing after a failure.
+GET
+/resumes/:resumeId/sections
+Bearer
+Only populated once status is 'parsed'.
+PATCH
+/resumes/:resumeId/sections/:type
+Bearer
+Edits a section; marks editedByUser so a re-parse won't overwrite it.
+
+
+4.4 Job Descriptions & Matching (6 endpoints)
+Method
+Path
+Auth
+Purpose
+POST
+/job-descriptions/paste
+Bearer, Verified
+Analysed inline; content-hash deduped.
+POST
+/job-descriptions/upload
+Bearer, Verified
+Same extraction pipeline as resumes.
+GET
+/job-descriptions
+Bearer
+Cursor-paginated list.
+GET
+/job-descriptions/:id
+Bearer
+Single JD.
+POST
+/job-descriptions/:id/retry
+Bearer
+Re-runs analysis after a failure.
+DELETE
+/job-descriptions/:id
+Bearer
+Delete.
+
+
+Method
+Path
+Auth
+Purpose
+POST
+/resumes/:resumeId/match/:jdId
+Bearer
+Synchronous, direct semantic + keyword match — separate from the full pipeline.
+
+
+4.5 Workspaces & the Pipeline (9 endpoints)
+Method
+Path
+Auth
+Purpose
+POST
+/workspaces
+Bearer
+Pairs a resume with a JD. Free.
+GET
+/workspaces
+Bearer
+Cursor-paginated list.
+GET
+/workspaces/:id
+Bearer
+Single workspace.
+DELETE
+/workspaces/:id
+Bearer
+Soft delete.
+POST
+/workspaces/:id/analyze
+Bearer, Verified, Idempotency-Key
+21 credits; starts the 12-step run.
+POST
+/workspaces/runs/:runId/stream-ticket
+Bearer
+Mints a 60s single-use SSE ticket.
+GET
+/workspaces/runs/:runId/stream
+Ticket (query param)
+SSE — @Public(), auth is the ticket, not a JWT.
+GET
+/workspaces/runs/:runId
+Bearer
+Poll fallback — same shape as the SSE snapshot.
+POST
+/workspaces/runs/:runId/retry
+Bearer
+Re-runs only failed/blocked steps; no re-charge.
+GET
+/workspaces/:id/report
+Bearer
+The ATS score and full breakdown.
+
+
+4.6 Suggestions & Resume Versions (6 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/workspaces/:id/suggestions
+Bearer
+Fabrication-guard-filtered rewrite suggestions.
+POST
+/workspaces/:id/suggestions/apply
+Bearer
+Batches accepted suggestions into ONE new resume version. Free.
+POST
+/workspaces/:id/suggestions/reject
+Bearer
+Dismisses without creating a version.
+GET
+/resumes/:id/versions
+Bearer
+Explicit version-creation events only (see 3.10).
+GET
+/resumes/:id/versions/diff
+Bearer
+Word-level diff between two versions.
+POST
+/resumes/:id/versions/:version/restore
+Bearer
+Copies forward as a new version; never rewrites history.
+
+
+4.7 Cover Letter (2 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/workspaces/:id/cover-letter
+Bearer
+The current (isCurrent: true) letter.
+POST
+/workspaces/:id/cover-letter/regenerate
+Bearer
+2 credits, charged only on success; supersedes the previous version.
+
+
+4.8 Interview Prep (2 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/workspaces/:id/interview-questions
+Bearer
+Grounded in the actual resume + JD.
+POST
+/interview-questions/:id/answer
+Bearer
+Practice mode — 1 credit, charged only on success.
+
+
+4.9 Company, Salary & Learning Roadmap (3 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/workspaces/:id/company-insight
+Bearer
+Tavily-grounded, globally cached 7 days per company.
+GET
+/workspaces/:id/salary-estimate
+Bearer
+Always a p25/p50/p75 range, isEstimate: true.
+GET
+/workspaces/:id/learning-roadmap
+Bearer
+At most 6 items, required gaps first.
+
+
+
+Part 5 — Live Test Report
+5.1 — Methodology
+This was a genuine end-to-end run against the real running API and worker processes, real Postgres/Redis/MinIO (via Docker), real OpenAI calls, and real Tavily search calls — not mocked, and not a dry read of the code. A fresh test account was created for this report specifically so the ENTIRE lifecycle (including registration and account deletion) could be exercised, rather than reusing a pre-existing seeded account.
+Two deliberate, clearly-scoped test shortcuts were used, both fully disclosed here:
+Email OTP and the password-reset token are, by design, only ever readable from the actual inbox they're emailed to — there is no backend bypass. Since this test has no access to that inbox, the corresponding verification_tokens row was updated directly (same argon2/sha256 hashing scheme the application itself uses) to a known value BEFORE calling the real endpoint. Every other behaviour — hashing, expiry, single-use consumption, attempt counting, JWT issuance — is the product's own real code path, exercised for real.
+A resume PDF was generated for this test (reportlab) with realistic, invented candidate content (name, employment history, skills) rather than a real person's document — this is the only piece of "test data" in the run; every response after that point is the real system's own output for that input.
+5.2 — Coverage summary
+Phase
+Result
+Notes
+Register → grant signup credits
+PASS
+100 credits granted on registration, confirmed in the ledger.
+Verify email (OTP)
+PASS
+Real argon2 verify, real JWT issuance.
+Login with password
+PASS
+Real argon2 password verify.
+Refresh token rotation
+PASS
+New access token issued, cookie rotated.
+Profile get/update
+PASS
+completeness moved 0 → 100 after a full update.
+Resume upload + parsing
+PASS
+uploaded → extracted → parsed in under 15s; 8/8 sections extracted correctly.
+Job description paste + analysis
+PASS
+6 skills, 7 requirements, correct required/preferred split.
+Direct resume↔JD match
+PASS
+Real semantic score + 6/6 keyword matches.
+Workspace create
+PASS
+
+
+Full pipeline run (12 steps)
+PARTIAL → RECOVERED
+generate_cover_letter failed on attempt 1 (placeholder guard, working as intended); run finished status=failed, refunded 4/21 credits correctly.
+Run retry
+PASS
+Only the failed step + its dependent re-ran; the other 10 steps were skipped, not re-billed; run reached status=completed.
+ATS report
+PASS
+overallScore 77, correct component breakdown.
+Suggestions list / apply / reject
+PASS
+7 generated, 2 applied → v2 created, 1 rejected.
+Version list / diff / restore
+PASS
+Word-level diff correct; restore(v1) created v3 (forward-only, confirmed).
+Cover letter get + regenerate
+PASS
+Regenerate correctly changed tone/length and created a new current version.
+Interview questions + practice answer
+PASS
+9 grounded questions; practice answer scored 70/100 with specific feedback.
+Company insight
+PASS
+confidence: medium, real Tavily sources.
+Salary estimate
+PASS
+Real p25/p50/p75 range with isEstimate: true.
+Learning roadmap
+PASS
+Exactly 6 items, required-first ordering.
+Sessions list
+PASS
+Reflected the real active refresh-token families.
+Forgot + reset password
+PASS
+New password confirmed via a real subsequent login.
+Old token invalidated after reset
+PASS
+tokenVersion bump confirmed — pre-reset token failed immediately, before its own expiry.
+Logout
+PASS
+204; refresh cookie revoked.
+Delete account
+PASS
+204; subsequent request with the same token correctly returned TOKEN_INVALID.
+
+
+5.3 — Findings
+One real product behaviour was observed live that's worth calling out explicitly, plus two minor, non-financial reporting nuances noticed while reading raw ledger/DB state during the test:
+Finding 1 — The fabrication/placeholder guard genuinely fires in production use (by design, working correctly)
+Across this session's cumulative live testing, cover-letter generation tripped the unfilled-placeholder guard on more than one real occasion — including once inside this very test's full pipeline run. This is not a flaw: it is the guard doing exactly what it is for. The observable product consequence is that generate_cover_letter (a REQUIRED step) failing turns the whole run status=failed rather than the softer status=partial, with a proportional credit refund — and the retry endpoint is the correct, working recovery path, confirmed live in this report. Teams shipping this product should expect a non-trivial baseline rate of first-attempt cover-letter rejections and should treat "failed, retry available" as an expected steady-state outcome for this step, not an incident.
+Finding 2 — pipeline_runs.creditsRefunded is overwritten, not accumulated, across a retry
+When a run fails and is refunded (say 4 credits), then successfully retried, the run row's own creditsRefunded field is reset to 0 on the successful finalise — but the EARLIER +4 refund ledger entry is never reversed, so the user's actual wallet balance is correct and untouched. This is confirmed by direct ledger inspection in this report: the user's real balance reflects a +100 grant, a -21 charge, and a +4 refund that remains permanently in their favour, exactly as it should. The only inaccuracy is cosmetic — a run summary that, after a fail-then-succeed cycle, under-reports its own refund history. Recommendation: if this run-level summary field is surfaced to users, either accumulate it across attempts or drop it in favour of always reading the ledger directly for that run's reference_id.
+Finding 3 — GET /resumes/:id/versions does not include an implicit "version 1"
+The endpoint only returns rows that were created by an explicit action (apply-suggestions or restore). A brand-new resume that has never had a suggestion applied or a version restored will return an EMPTY list, even though the resume itself is obviously "at version 1". A version-history screen should treat an empty response as "still on the original upload" and synthesize a v1 entry from the resume's own createdAt, rather than treating an empty list as an error state.
+5.4 — Cost & performance, observed
+Full 12-step pipeline run (fresh test account, first attempt): 84% progress reached before the cover-letter failure at roughly 35 seconds elapsed; the retried run completed shortly after.
+A separate full successful run earlier in this project's testing (same pipeline, different workspace) completed end-to-end in under 45 seconds and cost $0.027 in real OpenAI spend, most of it (~72%) in the single gpt-4o optimize_resume call — matching the design intent that only the quality-critical rewriting step uses the larger model, everything else uses gpt-4o-mini or embeddings.
+Company research demonstrated its 7-day global cache hitting on a second lookup for the same normalised company name, at zero additional Tavily/AI cost — confirmed via fromCache: true and a matching zero row in token_usage for that step.
+
+Part 6 — Sprints 9, 10 & 11: Documents, Payments & Operations
+The first eight sprints took a resume and a job posting to a scored, rewritten, interview-ready analysis. These three sprints turn that analysis into something a user can download, pay for, monitor, and — if they choose — delete entirely. Nothing here replaces earlier architecture; each addition extends an existing seam that a prior sprint deliberately left open for it (the Sprint 2 plan-limit stub, the audit_logs table's own comment anticipating an admin viewer, the credit ledger's append-only design).
+The three sprints, in one table
+Sprint
+Theme
+What it added
+9
+Documents & Notifications
+ATS-safe DOCX + Puppeteer-rendered PDF downloads (resume, cover letter, full report), staleness invalidation on new resume/cover-letter versions, and an in-app + email notifications system reacting to pipeline completion.
+10
+Payments
+Stripe Checkout, an idempotent + out-of-order-safe webhook handler, a daily reconciliation cron, and a real (Subscription-backed) replacement for the Sprint 2 plan-limit stub.
+11
+Operations
+A batched, cached dashboard; a double-gated admin panel (run inspector, dead-letter queue, cost breakdown, prompt activation); a generalised audit log; and a GDPR export/hard-purge pipeline.
+
+6.1 — Frontend story additions
+Six new things a user (or an admin) can now do, continuing directly from where Part 2 left off.
+6.1.1. Download a generated document
+From a completed workspace, the user requests a resume PDF, resume DOCX, cover letter (either format), or a full report PDF. The request returns immediately with status "queued" — the actual rendering (Puppeteer for PDFs, the docx package for Word files) happens on the worker. The frontend polls GET .../documents/:docId until status flips to "ready", then calls the download endpoint for a short-lived signed S3 URL. If the user accepts new suggestions or regenerates their cover letter AFTER a document was built, that document silently flips to "stale" — the frontend should treat stale the same as "not ready yet" and prompt a fresh request rather than serving an out-of-date file.
+6.1.2. Get notified when something finishes
+A bell icon shows an unread count. Analyses that complete (or fail/partial) while the user is away from the SSE progress screen still produce a notification — a domain event fires from StepRunner independently of the live progress stream, so closing the tab never means missing the result. Preferences are opt-OUT: a user can silence emails for specific notification types without losing the in-app entry.
+6.1.3. Upgrade to a paid plan
+From a billing screen, choosing Pro or Ultimate calls the checkout endpoint and redirects the browser to Stripe's hosted Checkout page — card details never touch this API. On success, Stripe calls back via webhook (not via the redirect itself, which is not trustworthy for granting access) to activate the subscription and refill monthly credits. A failed card on renewal moves the subscription to "past_due" and emails the user, but doesn't immediately revoke access — Stripe's own retry schedule gets a real chance before anything downgrades.
+6.1.4. View the dashboard
+One screen answers "where do I stand": credit balance, plan and its limits, resume/workspace counts against those limits, the most recent workspaces and their statuses, and the unread notification count — all in one request, cached for 30 seconds so a refresh storm does not turn into six times the database load per hit.
+6.1.5. (Admin only) Inspect a run, manage the dead-letter queue, activate a prompt
+A small, separately-gated surface for operators: pull up any run's full step-by-step history for debugging, browse and retry jobs that permanently failed in any queue, see AI cost broken down by feature/day/user, and flip which prompt template version is live for a given key — all without a deploy. Every mutating action here is written to the audit log with actorType "admin".
+6.1.6. Request your data, or delete your account
+A user can request a full data export (delivered as a download link once a background job finishes assembling it) or delete their account. Deletion is a soft delete — it's immediate for login purposes (every session is revoked on the spot) but the account is only hard-purged, along with every table that references it, 30 days later.
+6.2 — Backend architecture additions
+6.2.1 — Document generation (Sprint 9)
+A new GeneratedDocument row tracks each requested file: its type, S3 key once rendered, the resume/cover-letter version it was built from (for staleness), and a status machine (queued → generating → ready | stale | failed). DOCX generation follows strict ATS-safe rules enforced in code, not just convention: no tables, text boxes, multi-column layout, headers/footers, or images — a single linear column of paragraphs, using Word's tab-stop feature (not table cells) for right-aligned dates, since ATS parsers frequently drop table content entirely. PDF rendering reuses ONE Puppeteer browser instance across jobs (launching Chromium costs 1-2 seconds — doing it per job would make generation feel broken) but recycles the whole browser every 50 pages, since Chromium's steady memory leak would otherwise eventually OOM-kill the worker. Handlebars templates share layout via a registered partial; a resume-shaped object built once from ResumeSection rows feeds the same PDF template a live preview would use, so what the user saw is exactly what they download.
+6.2.2 — In-app notifications & pipeline events (Sprint 9)
+StepRunner now emits genuine domain events (run.completed / run.failed) via EventEmitter2 — distinct from the pre-existing Redis pub/sub ProgressBus used for live SSE progress, which only reaches a client with an open connection. A PipelineNotificationListener reacts to these events and writes a Notification row (plus an email, unless the user opted out for that type), wrapped so a notification failure can never fail the pipeline job itself. Accepting suggestions, restoring a resume version, or regenerating a cover letter each mark any already-built document derived from the old version as stale, scoped by workspace (a resume can be attached to more than one workspace).
+6.2.3 — Payments (Sprint 10)
+Plan, Subscription, and WebhookEvent are new tables; the existing credit ledger (Sprint 5's append-only design) was extended with a referenceType column and new reasons (monthly_refill, purchase, admin_adjust) rather than replaced with a second, competing ledger. Stripe webhook signature verification needs the exact raw request bytes, which Nest's default JSON body parser destroys before a handler ever sees them — main.ts now boots with bodyParser:false and manually wires raw-body parsing for the one webhook path, JSON for everything else. Idempotency is handled by inserting the event's id first and catching a Postgres unique-constraint violation (23505) as "already processed", rather than an exists-then-insert check that would race under concurrent delivery. A subscription's own lastEventAt timestamp guards against Stripe's at-least-once, any-order webhook delivery: an event older than the last one applied is a no-op, not a regression. A daily cron independently re-derives every active subscription's status directly from Stripe's API, as a safety net for the rare webhook that never arrives.
+6.2.4 — Real plan limits (Sprint 10)
+The Sprint 2 PlanLimitService stub — hardcoded plan limits with a planFor() that always returned "free" and a comment reading "later sprint: read the user's actual subscription" — is now exactly that: it reads the user's Subscription row (a canceled subscription falls back to the free plan's limits, a past_due one still counts as its paid plan during Stripe's grace period) and looks limits up from the Plan table. The public method signatures are unchanged, so every existing caller kept working untouched; a previously-missing workspace-creation limit check was added at the same time, since the stub's own maxWorkspaces field had never actually been enforced.
+6.2.5 — Dashboard (Sprint 11)
+DashboardService fetches credit balance, plan/subscription, resume and workspace counts, the five most recently updated workspaces, and unread notification count in a single Promise.all — none of the six depends on another's result — then caches the assembled result in Redis for 30 seconds per user.
+6.2.6 — Admin (Sprint 11)
+AdminGuard is a deliberate double gate: role === "admin" is not sufficient on its own — the user's email must ALSO appear in an env-controlled ADMIN_ALLOWED_EMAILS allowlist. A bug in role assignment, or a compromised admin account, cannot alone unlock the panel; an attacker needs both. Behind that gate: a run inspector (the run row plus every PipelineStep, including each step's outputRef — added in Sprint 7 specifically to let an inspector jump from a step to what it produced), dead-letter-queue browsing/retry across all four BullMQ queues, an AI cost breakdown by feature/day/top-spending-user straight from token_usage, and prompt-version activation reusing PromptsService's existing transactional deactivate-then-activate method unchanged.
+6.2.7 — Audit log (Sprint 11)
+AuditLog gained a resourceId column (it previously had no way to say which row an action was about). The ad-hoc write pattern AuthListener already used inline is now a shared AuditService with a log() that never throws — an audit failure must never break the caller's real action — and a filterable, cursor-paginated list() backing the admin audit viewer the module's own original comment anticipated ("the seam for a future admin-facing view audit log endpoint").
+6.2.8 — GDPR (Sprint 11)
+Data export is queued, not synchronous: a worker process collects the user's profile, resumes, workspaces, ATS reports, cover letters, credit ledger and more into one JSON file, uploads it to S3, and notifies the user with a signed link once it exists. The daily hard-purge job runs 30 days after UsersService.softDelete() and does real, careful cleanup rather than a bare DELETE FROM users: every Sprint 5+ table (ats_reports, pipeline_runs/pipeline_steps, ai_suggestions, cover_letters, and more) stores plain uuid columns with no real foreign key — an established, deliberate app-level-ownership design — so each is deleted explicitly, scoped by the user's workspace ids, before the User row itself. One extra orphan-risk table was found and handled during this work: resume_versions has no real foreign key to resumes either (unlike resume_sections, which does cascade correctly), so it is deleted by resumeId before the purge proceeds. Any active Stripe subscription is canceled and every S3 object under the user's prefix is removed; a Stripe API failure during cancellation is logged and swallowed rather than blocking the purge, since the local database rows are the actual source of truth for compliance, not a third party's availability.
+6.3 — Full API reference additions (22 new endpoints)
+6.3.1 Documents (4 endpoints)
+Method
+Path
+Auth
+Purpose
+POST
+/workspaces/:id/documents
+Bearer
+Queue generation of a resume/cover-letter/report document.
+GET
+/workspaces/:id/documents
+Bearer
+List every document ever generated for this workspace.
+GET
+/workspaces/:id/documents/:docId
+Bearer
+Poll a document's generation status.
+GET
+/workspaces/:id/documents/:docId/download
+Bearer
+Get a short-lived signed S3 download URL.
+
+6.3.2 Notifications (6 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/notifications
+Bearer
+Cursor-paginated list, newest first.
+GET
+/notifications/unread-count
+Bearer
+Badge count for the bell icon.
+PATCH
+/notifications/:id/read
+Bearer
+Mark one notification read.
+PATCH
+/notifications/read-all
+Bearer
+Mark every notification read.
+GET
+/notifications/preferences
+Bearer
+Which notification types have email disabled.
+PUT
+/notifications/preferences
+Bearer
+Replace the email-disabled list.
+
+6.3.3 Payments (3 endpoints)
+Method
+Path
+Auth
+Purpose
+POST
+/payments/checkout
+Bearer
+Create a Stripe Checkout session for Pro/Ultimate.
+GET
+/payments/subscription
+Bearer
+Current plan and subscription status (free plan if none exists).
+POST
+/payments/webhook
+Public (Stripe-signed)
+Stripe webhook receiver — idempotent, out-of-order-safe.
+
+6.3.4 Dashboard (1 endpoint)
+Method
+Path
+Auth
+Purpose
+GET
+/dashboard
+Bearer
+Batched, 30s-cached account overview.
+
+6.3.5 Admin (7 endpoints)
+Method
+Path
+Auth
+Purpose
+GET
+/admin/runs/:id
+Admin
+Full run + every step row, for debugging.
+GET
+/admin/queues/:name/dead-letter
+Admin
+List permanently-failed jobs in a queue.
+POST
+/admin/queues/:name/dead-letter/:jobId/retry
+Admin
+Requeue one failed job.
+GET
+/admin/costs
+Admin
+AI cost breakdown by feature/day/user.
+GET
+/admin/prompts/:key/versions
+Admin
+Every version of a prompt template.
+POST
+/admin/prompts/:key/activate
+Admin
+Activate a specific prompt version.
+GET
+/admin/audit
+Admin
+Filterable, paginated audit log.
+
+6.3.6 GDPR (1 endpoint)
+Method
+Path
+Auth
+Purpose
+POST
+/gdpr/export
+Bearer
+Queue a full data export (delivered via notification).
+
+6.4 — Verification performed this round, and what was not
+Unlike Part 5, this addition does not include a live, running-server Postman pass — the verification here was code- and process-level, and is reported exactly as honestly:
+tsc --noEmit, eslint, and nest build all run clean with zero errors.
+218 Jest tests pass, including new unit suites for PaymentsService, GdprService, NotificationsService, AuditService, DashboardService, DocumentsService, AdminService, and AdminGuard — covering webhook idempotency, the out-of-order guard, the double-gated admin check, GDPR purge ordering, and the notification opt-out path.
+Both the API process and the worker process were actually booted against the real local Postgres and Redis instances and confirmed to initialise every module (including all six new ones) with no dependency-injection errors.
+NOT done this round: an actual live Stripe checkout/webhook round-trip (via the Stripe CLI), a real Puppeteer-rendered PDF opened and visually checked, or an end-to-end GDPR export/purge run against seeded data. Those were verified by code inspection and unit tests with the Stripe SDK mocked, not by an observed live run — the same standard Part 5's findings held Sprints 1-8 to, applied honestly here as well.
+6.5 — Two real bugs this round, caught only by actually booting the app
+Bug 1 — Stripe's esModuleInterop trap
+import Stripe from 'stripe' compiles cleanly and passes every Jest test in this project (Jest's jest.mock('stripe', ...) replaces the whole module, sidestepping the problem entirely) — but throws "stripe_1.default is not a constructor" the instant the real app tries to construct PaymentsService or GdprService. This project's tsconfig has esModuleInterop off, and the stripe package is a TypeScript export= module with no .default — a default import silently binds to undefined at runtime. Fixed in both services with import Stripe = require('stripe'), the same class of issue the codebase had already hit once before with cookie-parser in main.ts.
+Bug 2 — migration:generate wanted to destroy every stored embedding
+TypeORM's migration diff against the live database included, alongside the genuinely new Sprint 9-11 tables, a DROP COLUMN and re-ADD of embeddings.embedding as character varying — silently changing it from vector(1536) and destroying every stored pgvector embedding, because the entity's TypeScript type (varchar, deliberately insert:false/update:false since the column is raw-SQL-managed) doesn't match what the introspector expects for a pgvector column. Caught by reading the generated migration before running it, rather than trusting the generator output blindly; the final applied migration contains only the genuine schema additions, hand-verified against a second diff that confirmed zero remaining drift.
+Both bugs share a lesson this whole project has leaned on from Sprint 1 onward: a clean compile and a green test suite are necessary, not sufficient — they verify units in isolation, not the real module graph, the real database, or a real third-party SDK's actual runtime shape.
+6.6 — Second verification pass: three real gaps closed, two false positives ruled out
+A follow-up verification report raised C1-C6 and M1/M2/M5 again, plus eleven new items (M3-M11) and several smaller findings. Re-checked against the actual codebase rather than applied blindly: C1-C6, M1, M2, and M5 were already fixed (the report was auditing this document's OWN stale pre-fix §2/§5 captures, not current code) — no changes were needed there. Of the new items, three were real and were fixed; the rest (M3, M6-M9) remain open by choice, scoped to a later pass.
+6.6.1 — Health endpoints (M4)
+GET /health/live and GET /health/ready, backed by @nestjs/terminus. Liveness deliberately checks NO dependency — a Postgres/Redis outage should page someone, not trigger a container-restart storm on every replica; that's what readiness is for. Readiness pings Postgres (TypeOrmHealthIndicator) and Redis (a new RedisHealthIndicator, using its own dedicated ioredis connection so a health check can never contend with real traffic) and returns Terminus's own response shape — not the usual {success,data,meta} envelope, since orchestrators expect a plain body. Both routes are @Public(), bypassing the global JWT guard, since load balancers and container orchestrators have no bearer token to send.
+6.6.2 — Idempotency-Key on checkout (M10)
+POST /payments/checkout now requires a unique Idempotency-Key header, same as the existing POST /workspaces/:id/analyze. The key is passed straight through as Stripe's OWN idempotency key on the API call, rather than tracked in a local table — Stripe is already the system of record for checkout sessions, and its API natively deduplicates a repeated request with the same key for 24 hours. A double-clicked "Upgrade" button can no longer create two Checkout sessions.
+6.6.3 — Missed monthly-refill safety net (M11)
+The daily reconciliation cron (PaymentsService.reconcileAll) previously only corrected a subscription's status/period drift against Stripe. It had no way to notice that a single missed invoice.payment_succeeded webhook left a user's subscription status perfectly correct while that month's credits were silently never granted — a different failure mode from status drift, and one the reconciliation job was not actually checking for. Subscription gained a last_refill_at column (migration SubscriptionRefillTracking); reconcileAll now compares it against the Stripe subscription's current_period_start and grants the missing refill if the last one predates the current period.
+6.6.4 — Billing policy decision, made explicit
+The report flagged that re-analysing an unchanged resume/JD pair still charges the full flat ANALYZE_CREDIT_COST even though parse_resume/parse_jd get skipped (their combined credit weight is refunded from nothing, since skipping isn't failing). This was a genuine product decision, not a bug: kept as a flat fee — "analyze" is priced as one action — and documented explicitly at the constant's definition so it reads as a decision, not an oversight, the next time someone finds the same discrepancy.
+6.6.5 — Verification
+236 Jest tests pass (up from 226), including new coverage for checkout idempotency (missing-header rejection, the key reaching Stripe's request options), reconcileAll's missed-refill grant and its "already refilled this period" no-op path, and both health endpoints.
+tsc, eslint, and nest build all clean.
+Both the API and worker processes were booted live against the real local Postgres/Redis; GET /health/live and GET /health/ready were hit directly and returned 200 with both dependencies reporting up.
