@@ -37,8 +37,13 @@
 ## Auth (Sprint 1)
 
 - The bootstrap (providers/auth-bootstrap.tsx) owns the 'loading' state and shows a splash. Guards
-  (components/auth/require-auth.tsx) act ONLY on 'anon'/'authed', never 'loading'. Never redirect on
-  loading — that flashes /login on every reload.
+  act ONLY on 'anon'/'authed', never 'loading'. Never redirect on loading — that flashes /login on
+  every reload.
+- Two guards, one in each direction: components/auth/require-auth.tsx keeps anonymous users off the
+  (app) group; components/auth/redirect-if-authed.tsx (wraps the (auth) layout) keeps an already
+  authed+verified user off login/register/forgot/reset — bounces them to /dashboard instead. It does
+  NOT fire for authed-but-unverified, since verify-email lives in the same (auth) group and is
+  reached mid-flow before a session even exists.
 - lib/api/client.ts's hard-redirect on TOKEN_INVALID/TOKEN_REUSE_DETECTED only fires when the failing
   request carried a bearer token — the bootstrap's own token-less /auth/refresh call must be able to
   fail silently (anonymous visitor, no cookie) without forcing a redirect loop on the page it's on.
@@ -50,3 +55,23 @@
 - Reset password forces a fresh login (old session is dead server-side).
 - Auth API calls live in features/auth/auth.api.ts, wrapped by React Query hooks in
   features/auth/auth.hooks.ts. Screens call the hooks, never `api` directly.
+
+## App shell & dashboard (Sprint 2)
+
+- The dashboard is ONE call: GET /dashboard (batched, server-cached 30s). Never fan out into
+  separate credits/workspaces/counts requests.
+- Real GET /dashboard shape (confirmed live, NOT what an API-doc-only guess would produce): flat —
+  `creditBalance`, `plan {key,name,status,monthlyCredits}` (no `plan.limits`), `resumes
+  {count,limit}`, `workspaces {total,completed,processing,failed,recent}` (no workspaces limit
+  field at all), `unreadNotifications`. See features/dashboard/dashboard.api.ts.
+- Real Notification shape: `readAt: string | null`, NOT a `read` boolean. `type` uses the same
+  dot-notation as SSE pipeline events (`run.completed`, `run.failed`). There is no `deepLink`
+  field — build the link from `data.workspaceId` yourself.
+- Nav is defined once in components/layout/nav-items.ts. Add routes there, not inline in the sidebar.
+- Active nav = pathname.startsWith(href + '/') so detail pages keep the parent highlighted.
+- Notifications: poll the unread COUNT (cheap); fetch the LIST only when the popover opens
+  (enabled:false + refetch()).
+- Credit balance is React Query key ['credits']; credit-spending mutations invalidate it to update
+  the topbar.
+- Reuse StatusBadge (components/ui/status-badge.tsx) for every workspace/run status across the app.
+- Mobile drawer reuses Radix Dialog (focus-trap/escape/scroll-lock free). No separate drawer lib.
