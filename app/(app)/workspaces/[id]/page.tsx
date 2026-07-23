@@ -30,9 +30,14 @@ function WorkspacePageInner({ id }: { id: string }) {
 
   if (!workspace) return <WorkspaceSkeleton />;
 
-  // No run yet -> the pre-analysis state with the Analyze button.
+  // No ACTIVE run to track -> the pre-analysis state, UNLESS a run has been attempted before.
+  // Gate on lastRunId existing, not on status === 'completed'/'partial': confirmed live that the
+  // ATS report and suggestions are already real and viewable as soon as their own steps finish,
+  // even when the run's overall status ends up 'failed' on a later, unrelated step (e.g. the
+  // cover-letter fabrication guard). Excluding 'failed' here would hide genuinely available data
+  // behind an "analyze again" prompt on every revisit that isn't via the live ?run= progress URL.
   if (!activeRunId || !run) {
-    if (workspace.status === "completed" || workspace.status === "partial") {
+    if (workspace.lastRunId) {
       return <WorkspaceView workspace={workspace} />;
     }
     return (

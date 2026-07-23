@@ -1,17 +1,31 @@
-import { Card } from "@/components/ui/card";
-import { Body } from "@/components/ui/typography";
+"use client";
+
+import { useState } from "react";
+import { Tabs } from "@/components/ui/tabs";
+import { ReportTab } from "@/features/report/components/report-tab";
+import { SuggestionsTab } from "@/features/suggestions/components/suggestions-tab";
 import { WorkspaceHeader } from "./workspace-header";
 import type { Workspace } from "../workspace.types";
 
-// Placeholder for a workspace that already has a completed/partial run. Sprint 6 replaces this
-// with the real tabs: ATS score, keyword table, suggestions, versions, cover letter.
+// There's no aggregate endpoint for a workspace's artifacts (report, suggestions, cover letter,
+// ...) — each tab fetches lazily via its own `active` flag so an unopened tab never fires a
+// request. Sprint 7/8 tabs (cover letter, versions, interview, company, salary, learning) slot in
+// here the same way.
 export function WorkspaceView({ workspace }: { workspace: Workspace }) {
+  const [tab, setTab] = useState("report");
+
   return (
     <div className="space-y-6">
       <WorkspaceHeader workspace={workspace} />
-      <Card>
-        <Body>The full report view (score, keywords, suggestions) lands in Sprint 6.</Body>
-      </Card>
+
+      <Tabs
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          { value: "report", label: "ATS Report", content: <ReportTab workspaceId={workspace.id} active={tab === "report"} /> },
+          { value: "suggestions", label: "Suggestions", content: <SuggestionsTab workspaceId={workspace.id} active={tab === "suggestions"} /> },
+        ]}
+      />
     </div>
   );
 }

@@ -169,3 +169,32 @@
 - A step failing (e.g. research_company) doesn't necessarily fail the whole run — confirmed live,
   the pipeline kept going after a non-required step failed. Don't assume one failed step means the
   run stops; read `run.status` for that.
+
+## ATS report & suggestions (Sprint 6)
+
+- The report is available as soon as its underlying steps (score_ats, match_keywords, ...)
+  complete, EVEN IF the overall run later fails on a different step (confirmed live: fetched a
+  full real report from a run whose status was 'failed' because generate_cover_letter tripped the
+  fabrication guard). Don't gate report access on `workspace.status === 'completed'` — this was a
+  real bug caught in Sprint 6's own smoke test: app/(app)/workspaces/[id]/page.tsx originally only
+  rendered WorkspaceView for status completed/partial, hiding a genuinely available, real report
+  behind an "analyze again" prompt for every 'failed' workspace. Fixed to gate on
+  `workspace.lastRunId` existing instead (any run ever attempted, regardless of outcome) — each
+  tab's own query handles "not ready" individually via its own error code.
+- If no analysis has produced a report yet at all, GET .../report returns 409 REPORT_NOT_READY
+  (details: `{status}`) — ReportTab handles this specific code, not just "no data".
+- Render `report.scoreBreakdown` AS AN ARRAY. Never hardcode component rows — confirmed live: a
+  real report had exactly 6 components (no `education`), and explains why in a Caption rather than
+  showing a silent gap. The flat `*Score` fields exist on AtsReport but the array is authoritative.
+- Real AiSuggestion shape matches the sprint doc's guess exactly, EXCEPT: `newText` (never
+  `oldText`) consistently arrives with literal wrapping quote characters baked into the string
+  content itself — a backend generation artifact. SuggestionCard strips one layer of matching
+  leading/trailing quotes before display (stripWrappingQuotes) rather than rendering it as-is.
+- Suggestions are already fabrication-filtered server-side. Render them; don't re-validate.
+  Surface that guarantee in the UI (the ShieldCheckIcon banner) — it's why users trust applying them.
+- Apply is a BATCH -> ONE new resume version — confirmed live (`{version, applied, skipped}`,
+  applying 1 of 7 pending suggestions correctly produced resume version 2). Reject's real response
+  is `{rejected: number}`, not void, though nothing currently needs to read it.
+- Workspace tabs fetch lazily via `enabled: active` on each tab's own query — there's no aggregate
+  endpoint, so eager fetching would fire a request for every tab on mount regardless of which one
+  is open.
