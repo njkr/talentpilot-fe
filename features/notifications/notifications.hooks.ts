@@ -7,7 +7,7 @@ export function useUnreadCount() {
   return useQuery({
     queryKey: ["notifications", "unread"],
     queryFn: notificationsApi.unreadCount,
-    refetchInterval: 45_000, // poll — a run finishing while away should light the bell
+    refetchInterval: 600_000, // poll — a run finishing while away should light the bell
     refetchOnWindowFocus: true,
   });
 }
