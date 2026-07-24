@@ -198,3 +198,33 @@
 - Workspace tabs fetch lazily via `enabled: active` on each tab's own query — there's no aggregate
   endpoint, so eager fetching would fire a request for every tab on mount regardless of which one
   is open.
+
+## Versions & cover letter (Sprint 7)
+
+- Confirmed live (backend Finding 3, reproduced exactly): GET /resumes/:id/versions returns ONLY
+  explicit apply/restore events. A resume with a real applied-suggestion v2 still omitted v1
+  entirely from the list. ALWAYS synthesize a "v1 — Original upload" entry from resume.createdAt
+  when v1 is absent (useVersions in features/versions/hooks). Empty is NOT an error state.
+- Real ResumeVersion shape omits `resumeId`/`workspaceId` that a first guess might include — only
+  `{id, version, label, changeSummary, createdBy, suggestionsApplied, createdAt}` come back. There
+  is no `resume.currentVersion` field either — the current version is always
+  `Math.max(...versions.map(v => v.version))` under the forward-only model.
+- Restore is FORWARD-ONLY — confirmed live: restoring v1 while on v2 created v3, not a reversion.
+  Real restore response is `{version: number}` (the NEW version number). RestoreConfirm explains
+  this before restoring (nothing is deleted) — wire it in as an actual confirmation step, don't
+  restore directly on click.
+- Diff shape confirmed live exactly as guessed (`{sectionType, changed, changes: [{value, added?,
+  removed?, count}]}`). One real consequence of Sprint 6's `newText` quote-wrapping quirk: applying
+  that suggestion actually saved literal `"` characters into the resume's stored skills text, and
+  the diff view correctly (and appropriately) shows them as part of the real added content — don't
+  strip quotes in the diff view the way SuggestionCard does for the pre-apply preview; that would
+  hide what's genuinely stored now.
+- Cover letter GET returns plain 404 NOT_FOUND when nothing's generated yet (not a distinct "not
+  ready" code) — `if (!letter)` already handles this fine via React Query's data staying undefined.
+- Real regenerate failure code is `AI_OUTPUT_INVALID` — NOT `INVALID_OUTPUT` or `AI_INVALID_OUTPUT`,
+  both plausible-looking guesses that don't exist. Confirmed live 3/3 real attempts in this account
+  hit the fabrication guard with this exact code, and confirmed the credit balance was genuinely
+  unchanged after — always tell the user they weren't charged on this specific error.
+- ⚠️ A successful CoverLetter response was never observed live (every real attempt hit the guard) —
+  features/cover-letter/cover-letter.types.ts's shape is the sprint doc's reasonable but unverified
+  guess. Update it the first time a real successful generation is actually seen.

@@ -4,13 +4,13 @@ import { useState } from "react";
 import { Tabs } from "@/components/ui/tabs";
 import { ReportTab } from "@/features/report/components/report-tab";
 import { SuggestionsTab } from "@/features/suggestions/components/suggestions-tab";
+import { CoverLetterTab } from "@/features/cover-letter/components/cover-letter-tab";
 import { WorkspaceHeader } from "./workspace-header";
 import type { Workspace } from "../workspace.types";
 
 // There's no aggregate endpoint for a workspace's artifacts (report, suggestions, cover letter,
 // ...) — each tab fetches lazily via its own `active` flag so an unopened tab never fires a
-// request. Sprint 7/8 tabs (cover letter, versions, interview, company, salary, learning) slot in
-// here the same way.
+// request. Sprint 8 tabs (interview, company, salary, learning) slot in here the same way.
 export function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const [tab, setTab] = useState("report");
 
@@ -24,6 +24,7 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
         items={[
           { value: "report", label: "ATS Report", content: <ReportTab workspaceId={workspace.id} active={tab === "report"} /> },
           { value: "suggestions", label: "Suggestions", content: <SuggestionsTab workspaceId={workspace.id} active={tab === "suggestions"} /> },
+          { value: "cover-letter", label: "Cover Letter", content: <CoverLetterTab workspaceId={workspace.id} active={tab === "cover-letter"} /> },
         ]}
       />
     </div>
