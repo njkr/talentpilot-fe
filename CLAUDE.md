@@ -122,8 +122,10 @@
 - Real JobDescription shape has several fields the sprint doc's guess omitted entirely at the top
   level (not just nested in parsedData): employmentType, location, salaryMin, salaryMax,
   salaryCurrency. See features/jobs/job.types.ts.
-- The parsed view is READ-ONLY (unlike resume sections — JDs aren't user-edited). There's also no
-  rename endpoint for job descriptions — JobActions is Delete-only, unlike ResumeCardActions.
+- The parsed view is READ-ONLY (unlike resume sections — JDs aren't user-edited), EXCEPT for
+  company/position correction via PATCH /job-descriptions/:id (added 2026-07-24 — see
+  "Missing fields" below). JobActions itself is still Delete-only; the correction flow lives in
+  MissingFieldsBanner, not JobActions.
 - Requirements group by importance: required → preferred → nice_to_have. Reuse ImportanceBadge
   (components/ui/importance-badge.tsx, danger/primary/muted) — the same component is meant to
   reappear in the Sprint 6 keyword table.
@@ -131,6 +133,23 @@
   their status vocabularies don't overlap enough to safely reuse one map.
 - Position/company are optional hints; the analyzer extracts them from the text if omitted.
 - Paste dedupe is invisible (content-hash) — navigating to the existing JD is correct, not an error.
+
+### Missing fields (added 2026-07-24)
+
+- Every JD-returning endpoint now includes `missingFields: ("company" | "position")[]`, populated
+  once `status === 'analyzed'` (ignore it before that). Confirmed live exactly as specced.
+- `position` is NEVER actually null — an unresolved position comes back as the literal sentinel
+  string `"Untitled position"`. `jd.position ?? fallback` never fires against real data. Always use
+  `displayPosition(jd)` (features/jobs/job.types.ts), which checks the sentinel directly — this
+  bug predated this feature and was only caught while wiring it in.
+- `PATCH /job-descriptions/:id` (`{company?, position?}`) is a direct field correction, NOT a
+  re-parse — confirmed live: `parsedData` is untouched, only the top-level fields change. Omit a
+  field to leave it alone (empty string is rejected server-side, not treated as "clear it").
+- This is a SOFT nudge, not a hard block — the pipeline already handles a missing company/position
+  gracefully (skips research_company, avoids fabricating a company in the cover letter, completes
+  as 'partial' instead of 'completed'). MissingFieldsBanner (on the JD detail page, via JobHeader)
+  lets the user fix it or explicitly skip; JobPicker (workspace creation) shows a lighter warning
+  indicator for the same reason, without blocking workspace creation or analysis.
 
 ## Workspace + the live pipeline (Sprint 5) — the most important screen
 

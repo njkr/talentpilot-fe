@@ -31,12 +31,18 @@ export interface JobParsedData {
   salary: { min: number | null; max: number | null; currency: string | null };
 }
 
+export type MissingField = "company" | "position";
+
 // Real top-level shape has several fields the sprint doc's guess omitted entirely (employmentType,
 // location, salaryMin/Max/Currency all duplicated at this level, not just inside parsedData).
+// missingFields confirmed live 2026-07-24 (see the FE integration guide for the feature) —
+// populated once status is 'analyzed'; meaningless (may be absent or stale) before that.
 export interface JobDescription {
   id: string;
   company: string | null;
-  position: string | null; // backend already defaults this to "Untitled position" when unresolved
+  position: string | null; // backend defaults this to the literal string "Untitled position" when
+  // unresolved — NEVER actually null. Use displayPosition() below, not `position ?? fallback`,
+  // which never fires since the value is always a truthy string.
   source: "paste" | "upload";
   status: JobStatus;
   employmentType: string | null;
@@ -48,7 +54,16 @@ export interface JobDescription {
   salaryCurrency: string | null;
   parsedData: JobParsedData | null;
   parseError: string | null;
+  missingFields: MissingField[];
   createdAt: string;
 }
 
 export const isJobTerminal = (s: JobStatus) => s === "analyzed" || s === "failed";
+
+const UNSET_POSITION_SENTINEL = "Untitled position";
+
+// The backend's "position not resolved" sentinel is a real, non-null string — a naive
+// `position ?? fallback` never catches it. Checked directly against the literal value (not just
+// missingFields) so it's correct even outside 'analyzed' status, where missingFields isn't
+// guaranteed meaningful.
+export const displayPosition = (jd: Pick<JobDescription, "position">): string => (jd.position && jd.position !== UNSET_POSITION_SENTINEL ? jd.position : "Untitled role");

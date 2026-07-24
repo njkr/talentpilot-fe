@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Caption } from "@/components/ui/typography";
 import { JobStatusBadge } from "./job-status-badge";
-import type { JobDescription } from "../job.types";
+import { displayPosition, type JobDescription } from "../job.types";
 
 export function JobCard({ jd }: { jd: JobDescription }) {
   const p = jd.parsedData;
@@ -11,7 +11,7 @@ export function JobCard({ jd }: { jd: JobDescription }) {
       <Link href={`/jobs/${jd.id}`} className="block">
         <div className="flex items-start justify-between">
           <div className="min-w-0">
-            <p className="font-medium text-ink truncate">{jd.position ?? "Untitled role"}</p>
+            <p className="font-medium text-ink truncate">{displayPosition(jd)}</p>
             <Caption>{jd.company ?? "Unknown company"}</Caption>
           </div>
           {jd.status !== "analyzed" && <JobStatusBadge status={jd.status} />}
