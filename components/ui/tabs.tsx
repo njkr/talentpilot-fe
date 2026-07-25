@@ -22,13 +22,13 @@ interface TabsProps {
 export function Tabs({ items, defaultValue, value, onValueChange, className }: TabsProps) {
   return (
     <TabsPrimitive.Root defaultValue={defaultValue ?? items[0]?.value} value={value} onValueChange={onValueChange} className={className}>
-      <TabsPrimitive.List className="flex gap-1 border-b border-border">
+      <TabsPrimitive.List className="flex gap-1 overflow-x-auto border-b border-border">
         {items.map((item) => (
           <TabsPrimitive.Trigger
             key={item.value}
             value={item.value}
             className={cn(
-              "px-3 py-2 text-sm font-medium text-ink-secondary border-b-2 border-transparent -mb-px",
+              "shrink-0 whitespace-nowrap px-3 py-2 text-sm font-medium text-ink-secondary border-b-2 border-transparent -mb-px",
               "hover:text-ink data-[state=active]:text-primary data-[state=active]:border-primary",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 rounded-t-md",
             )}

@@ -13,7 +13,7 @@ export function AvatarMenu() {
 
   return (
     <Menu.Root>
-      <Menu.Trigger className="grid h-8 w-8 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+      <Menu.Trigger aria-label="Account menu" className="grid h-8 w-8 place-items-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
         {initials}
       </Menu.Trigger>
       <Menu.Portal>

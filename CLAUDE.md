@@ -244,6 +244,157 @@
   both plausible-looking guesses that don't exist. Confirmed live 3/3 real attempts in this account
   hit the fabrication guard with this exact code, and confirmed the credit balance was genuinely
   unchanged after — always tell the user they weren't charged on this specific error.
-- ⚠️ A successful CoverLetter response was never observed live (every real attempt hit the guard) —
-  features/cover-letter/cover-letter.types.ts's shape is the sprint doc's reasonable but unverified
-  guess. Update it the first time a real successful generation is actually seen.
+- CoverLetter's success shape is now confirmed live (2026-07-24, a later regenerate attempt on the
+  same workspace finally cleared the fabrication guard) — matches the sprint doc's guess exactly.
+
+## Career prep tabs (Sprint 8)
+
+- These four tabs render HONEST UNCERTAINTY. Do not treat any of it as an error:
+  - company `confidence: 'low'` = little public footprint → show the honest banner, keep the sources
+  - learning `url: null` = the model wouldn't vouch for a link → render the title as searchable text
+  - salary `isEstimate` is ALWAYS true → always label it an estimate, never a quote
+- ⚠️ Confirmed live: a real learning-roadmap item had `url` as the LITERAL STRING `"null"` (four
+  characters), not a JSON null. `Boolean("null")` is `true`, so a naive `item.url ? <a> : ...` truthy
+  check renders a broken `href="null"` link — exactly the failure mode this field exists to
+  prevent. Always go through `hasRealUrl()` (features/learning/learning.types.ts), never a bare
+  truthy check on `url`.
+- `research_company` and `estimate_salary` are OPTIONAL pipeline steps. Their absence means a
+  partial run, not a broken app → "unavailable, retry the run", never a crash. Both hooks set
+  `retry: false` since a missing insight/estimate isn't a transient failure worth retrying.
+- Interview: model answer hidden until revealed (reading it first defeats practice). Submit
+  disabled under 20 chars so nobody burns a credit on a non-answer. Score is an inline coach meter,
+  not pass/fail. The answer-submission response shape (`InterviewQuestion` with feedback populated)
+  is UNCONFIRMED — every real attempt hit INSUFFICIENT_CREDITS (balance exhausted by earlier
+  sprints' live testing) before a successful submission could be observed.
+- Salary currency: always `Intl.NumberFormat` with the row's own `currency` code. Never hardcode $.
+- `FilterChip` (components/ui/filter-chip.tsx) is shared — extracted here after the same pattern
+  was independently built twice (Sprint 6's keyword table, this sprint's interview type filter).
+  Reuse it rather than building a third local copy.
+- Same lazy tab pattern as Sprint 6: `enabled: active`.
+
+## Documents & downloads (Sprint 9)
+
+- Real `type` enum (confirmed live via `VALIDATION_FAILED.fields.type` on a bad value): `resume_pdf
+  | resume_docx | cover_letter_pdf | cover_letter_docx | full_report_pdf` — NOT `report_pdf`, which
+  the sprint doc's prose implied but never actually spelled out as a literal string.
+  DOCUMENT_LABELS/DOCUMENT_TYPES live in features/documents/document.types.ts.
+- Real GeneratedDocument shape confirmed live + matches Postman exactly: `{id, workspaceId, type,
+  filename, status, fileSize, error, createdAt, updatedAt}`. `status` is `queued | generating |
+  ready | stale | failed`.
+- Generation completes in ~1-4s in this dev environment (Puppeteer/docx rendering is fast at this
+  scale) — polling at 1.5s intervals (features/documents/hooks/use-documents.ts) feels near-instant
+  in practice; don't assume production latency will match.
+- `stale` (CLAUDE.md's top-level rule) is enforced in the download menu itself: a stale document
+  never offers a direct "Download" action, only "Regenerate" — see download-menu.tsx's `Row`.
+- Download endpoint returns a short-lived signed URL (`{url, filename}`) — confirmed live it works
+  against MinIO in dev exactly like the doc's S3 description. Triggered via a programmatic `<a
+  download>` click (features/documents/hooks/use-documents.ts's `triggerBrowserDownload`), not
+  `window.open`, so the browser's own save-file UX applies.
+- The list endpoint (`GET .../documents`) is fetched eagerly whenever DownloadMenu mounts, NOT
+  gated behind `enabled: active` the way the heavier Sprint 6/8 workspace tabs are — it's one cheap
+  row per document ever generated, not a per-tab heavy artifact fetch, so the lazy-tab pattern's
+  rationale doesn't apply here.
+- DownloadMenu only tracks ONE in-flight generation at a time (a single `inFlight` slot, not one
+  poller per type) — deliberate scope decision, since a user only ever clicks one button at once
+  from this UI.
+- `DOCUMENT_NOT_READY` (409, details `{status}`) is the real error code for calling download before
+  `ready` — already known from the backend's ErrorCode enum before this sprint even started.
+
+## Billing & credits (Sprint 10)
+
+- ⚠️ `GET /plans` DOES NOT EXIST — confirmed three independent ways: live 404, absent from the
+  44-endpoint API reference in docs/API-Full-Documentation.txt, absent from the Postman collection.
+  There is no catalog endpoint for prices/features of plans other than the caller's own current
+  one. The billing page therefore does NOT show a multi-plan comparison grid — CLAUDE.md's "never
+  invent a field the API doesn't return" extends to never inventing this endpoint's data either.
+  Upgrade buttons (features/payments/components/upgrade-plans.tsx) call checkout directly by plan
+  key with zero fabricated pricing/feature copy; Stripe's own Checkout page is the only real source
+  shown for what a plan costs, immediately after clicking "Upgrade to Pro/Ultimate".
+- Real `PlanKey` set, confirmed via the checkout endpoint's own Postman description ("`planKey` is
+  `pro` or `ultimate`, never `free`"): `free | pro | ultimate`. Checkout body is JUST `{planKey}` —
+  NO `interval` field (no monthly/yearly choice exists in this backend at all; a sprint doc
+  assuming a billing-interval toggle would be building a control for something that isn't there).
+- Real `POST /payments/checkout` behavior: 201 `{url}` on success; 404 `NOT_FOUND` ("Plan \"pro\" is
+  not available for checkout.") if that plan has no Stripe price configured in this environment;
+  400 `IDEMPOTENCY_KEY_REQUIRED` if the header is missing. Idempotency-Key: one fresh
+  `crypto.randomUUID()` per logical upgrade click, generated at click time — same rule as analyze
+  (Sprint 5).
+- Real `GET /payments/subscription` shape (confirmed live + Postman, richer than a bare Stripe
+  mirror): `{planKey, planName, monthlyCredits, maxResumes, maxWorkspaces, status,
+  currentPeriodEnd, cancelAtPeriodEnd}`. It's already merged with the plan's own limits — no
+  separate plan-lookup call needed for the CURRENT plan. `currentPeriodEnd` is confirmed live to be
+  `null` on the free plan — the billing page's checkout-confirming flow uses "it's no longer null"
+  as the real, grounded signal a webhook-activated paid subscription now exists (see below).
+- Checkout redirect vs webhook: the redirect back from Stripe is NOT trustworthy for granting
+  access (doc: activation happens via webhook, which can lag the redirect by a few seconds). The
+  billing page (app/(app)/billing/page.tsx) handles `?checkout=success` by polling
+  `useSubscription(true)` (refetchInterval every 2s) until `currentPeriodEnd` is non-null, capped
+  at a 40s one-shot bail-out timer — never trust the redirect URL alone, never poll forever.
+- `POST /payments/portal` confirmed: 201 `{url}` on success; 404 `NOT_FOUND` ("No billing account
+  on file — you are on the free plan.") for a free-plan user. CurrentPlanCard hides the "Manage
+  billing" button entirely for `planKey === 'free'` rather than inviting a click that can only
+  fail — this is a known, deterministic case, not a rare error.
+- Real `GET /credits/history` shape (confirmed live + Postman, exactly): `{id, amount, reason,
+  referenceId, referenceType, createdAt}` — there is NO `balanceAfter` field. A sprint doc's
+  running-balance ledger UI design is not buildable from real data; don't compute one client-side
+  either (this account's live history has out-of-order refund rows from repeated retries, so
+  summing deltas backwards would not reconstruct a trustworthy historical balance).
+- Real `reason` values observed: `analyze`, `cover_letter_regenerate`, `refund`, `retry_reversal`,
+  `admin_adjust` (all live), `signup_bonus` (Postman example), plus `monthly_refill`/`purchase`
+  (named in the API doc's prose, not yet observed live in this account). `reason` is typed as
+  `string`, not a strict union (features/credits/credits.types.ts) — this list has already grown
+  past every guess once; `humanizeReason()` falls back to a generic title-case for anything not in
+  its label map rather than assuming the map is exhaustive.
+- `GET /credits/history` is cursor-paginated (`meta.nextCursor`/`meta.hasMore`, both confirmed
+  live) — the first cursor-paginated list in this codebase, via `api.list()` +
+  `useInfiniteQuery` (features/credits/credits.hooks.ts's `useCreditHistory`).
+
+## Settings & polish (Sprint 11)
+
+- `GET /profiles/me` confirmed live to never 404 (all-null shell, `completeness: 0`). `PUT` is a
+  real upsert (omitted fields untouched) — confirmed live the backend validates linkedin/github as
+  well-formed URLs but does NOT validate against their real hosts (a plain
+  `https://notlinkedin.com/x` was accepted and saved as-is) — the sprint doc's own form claimed
+  host mirroring that isn't actually enforced server-side; the client only mirrors what's real
+  (URL format + yearsExperience 0-60 range, both confirmed live via VALIDATION_FAILED messages).
+- `GET /auth/sessions` is confirmed live to be an UNBOUNDED array, not paginated — this dev account
+  alone had 50+ entries from repeated test logins. SecuritySettings renders it in a bounded
+  `max-h-96 overflow-y-auto` list rather than assuming it's always short. No field distinguishes
+  the CURRENT device — don't try to guess/highlight one.
+- ⚠️ Real notification `type` values (dot-notation, confirmed live): `run.completed`, `run.failed`,
+  `gdpr.export_ready`. The sprint doc's guessed preference toggle set (`analysis_complete`,
+  `analysis_failed`, `credits_low`, `payment`) matches NONE of these — `PUT
+  /notifications/preferences` accepts arbitrary strings with no server-side enum validation, so
+  shipping the doc's guessed strings would have produced toggles that silently did nothing (never
+  matching any real notification's `type`). `NOTIFICATION_TYPES` in
+  features/notifications/notifications.api.ts lists only the 3 confirmed-real values.
+- ⚠️ `GET`/`PUT /notifications/preferences` response shape conflicts between live and the Postman
+  collection's saved example (bare array + `data: null` in Postman vs. confirmed-live
+  `{emailDisabled: string[]}` for both, PUT echoing the full updated object) — live wins, since a
+  running instance is more authoritative than a possibly-stale saved example.
+- `POST /gdpr/export` confirmed live: `{success:true, data:null}`, delivered almost instantly in
+  dev via a `gdpr.export_ready` notification whose `message` field embeds the real signed download
+  URL as plain text (not a separate structured field) — there's nothing to poll or track by id,
+  just fire the request and point the user at their notifications.
+- Delete account (`DELETE /users/me`) was NOT live-tested this sprint (deliberately — it would have
+  destroyed the shared dev test account used across every prior sprint's verification). Trusted the
+  API doc's own confirmed claim instead (token comes back TOKEN_INVALID on the very next call).
+  Type-to-confirm dialog + redirect to `/login?accountDeleted=1` (a real inline banner on the login
+  page, not a param the old bare `/` landing page could ever have rendered).
+- Added `@radix-ui/react-switch` (components/ui/switch.tsx) — the first opt-out toggle in the app;
+  Checkbox's tri-state/form semantics don't fit an immediate on/off preference.
+- Polish pass highlights (full pass, not exhaustive — see the session's own audit for the rest):
+  contrast fix applied to the 2 real `text-sm`-scale `text-ink-muted` body-text violations found
+  (resume-picker/job-picker empty hints) — Caption's own `text-xs` scale was treated as the
+  documented exception, not a bug, so it was left alone. Tab bar (components/ui/tabs.tsx) gained
+  `overflow-x-auto` + `shrink-0 whitespace-nowrap` triggers — confirmed a real gap, since
+  WorkspaceView alone has 7 tabs that would overflow a 375px viewport. `Button` gained
+  `aria-busy` when loading. Avatar menu trigger gained `aria-label="Account menu"` (initials alone
+  aren't an adequate accessible name). Added root + (app)-segment `error.tsx` and a real
+  `not-found.tsx` (none existed before). Added a per-route `metadata.title` via a `layout.tsx`
+  next to every page (client pages can't export metadata directly), using a `"%s · TalentPilot"`
+  template on the root layout. Grep audit for raw hex/heavy shadows/banned radii/non-Heroicons
+  icons/spring-motion all came back clean — the codebase was already disciplined going into this
+  pass. NOT done: retrofitting every `Button` size to a 44px touch target (`sm`/`md`/`lg` are
+  32/36/40px) — flagged rather than silently changed, since it's a foundational, already-shipped
+  design-system dimension change with broad blast radius, not a scoped bug fix.

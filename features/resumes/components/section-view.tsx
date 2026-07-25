@@ -26,7 +26,7 @@ export function SectionView({ section }: { section: ResumeSection }) {
           <p className="font-medium text-ink">{c.fullName}</p>
           <p>{[c.email, c.phone, c.location].filter(Boolean).join(" · ")}</p>
           {c.links?.map((l) => (
-            <a key={l.url} href={l.url} target="_blank" rel="noreferrer" className="text-primary block">
+            <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="text-primary block">
               {l.label}
             </a>
           ))}

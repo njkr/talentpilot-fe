@@ -41,3 +41,15 @@ export function useMarkAllRead() {
     },
   });
 }
+
+export function useNotificationPreferences() {
+  return useQuery({ queryKey: ["notifications", "preferences"], queryFn: notificationsApi.getPreferences });
+}
+
+export function useUpdateNotificationPreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: notificationsApi.updatePreferences,
+    onSuccess: (data) => qc.setQueryData(["notifications", "preferences"], data),
+  });
+}

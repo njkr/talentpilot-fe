@@ -29,6 +29,7 @@ function LoginForm() {
   const login = useLogin();
   const router = useRouter();
   const wasReset = useSearchParams().get("reset") === "1";
+  const wasDeleted = useSearchParams().get("accountDeleted") === "1";
 
   const onSubmit = (values: Form) =>
     login.mutate(values, {
@@ -64,6 +65,11 @@ function LoginForm() {
       {wasReset && (
         <div className="mb-4 rounded-lg bg-success/10 px-3 py-2 text-sm text-success">
           Password reset. Sign in with your new password.
+        </div>
+      )}
+      {wasDeleted && (
+        <div className="mb-4 rounded-lg bg-bg px-3 py-2 text-sm text-ink-secondary">
+          Your account has been deleted. Sign in only if you meant to create a new one.
         </div>
       )}
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

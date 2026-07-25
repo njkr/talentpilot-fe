@@ -31,7 +31,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, VariantPr
 export function Button({ className, variant, size, loading, asChild, children, disabled, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   return (
-    <Comp className={cn(buttonVariants({ variant, size }), className)} disabled={disabled || loading} {...props}>
+    <Comp className={cn(buttonVariants({ variant, size }), className)} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
       {loading && <Spinner className="h-4 w-4" />}
       {/* Slot (asChild) requires exactly one element child to clone onto — Slottable marks which
           child that is, so the spinner can still render as a sibling instead of breaking Slot's

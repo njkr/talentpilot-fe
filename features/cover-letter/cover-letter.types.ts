@@ -1,7 +1,5 @@
-// ⚠️ UNCONFIRMED LIVE: every real regenerate attempt in this account (3 in a row) hit the
-// fabrication/placeholder guard and returned AI_OUTPUT_INVALID — a genuinely successful response
-// was never observed. This shape is the sprint doc's reasonable guess, not verified data. Update
-// this the first time a real successful CoverLetter response is actually seen.
+// Confirmed live 2026-07-24 (a later regenerate attempt on this same workspace finally cleared
+// the fabrication guard) — matches this shape exactly, field for field.
 export interface CoverLetter {
   id: string;
   workspaceId: string;

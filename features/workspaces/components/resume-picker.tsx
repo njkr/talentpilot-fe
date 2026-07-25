@@ -13,7 +13,7 @@ export function ResumePicker({ resumes, value, onChange, emptyHint }: ResumePick
     <div className="space-y-1.5">
       <span className="text-sm font-medium text-ink">Resume</span>
       {resumes.length === 0 ? (
-        <p className="text-sm text-ink-muted">{emptyHint}</p>
+        <p className="text-sm text-ink-secondary">{emptyHint}</p>
       ) : (
         <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-border p-1">
           {resumes.map((r) => (
