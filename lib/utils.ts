@@ -26,6 +26,13 @@ export function timeAgo(iso: string): string {
   return relativeFormatter.format(Math.round(seconds), "second");
 }
 
+// "Aug 25, 2026" — an absolute date, for renewal/cancellation/access-end dates where "in 29 days"
+// (timeAgo's relative style) reads worse than a concrete date the user can actually plan around.
+export function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 // "94.5 KB" / "2.3 MB" style formatting for a raw byte count (Resume.fileSize).
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

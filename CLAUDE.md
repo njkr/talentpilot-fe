@@ -3,7 +3,10 @@
 - Backend is DONE. Response shapes are in docs/API-Full-Documentation.txt — render those exact shapes.
   Postman collection: docs/TalentPilot-API.postman_collection.json, docs/TalentPilot-API.postman_environment.json.
   Never invent a field the API doesn't return.
-- Errors: switch on error.code (closed enum), NEVER on error.message. Map lives in lib/error-actions.ts.
+- Errors: switch on error.code (closed enum), NEVER on error.message. `lib/error-actions.ts`'s
+  `errorActions`/`actionFor` map exists for this but is actually dead code — grepped the repo
+  2026-07-27 and nothing calls it. Every mutation handles `error.code` locally in its own `onError`
+  instead; that's the real, established pattern to follow, not the unused map.
 - SSE: mint a stream-ticket, then open EventSource with ?ticket=. EventSource CANNOT send headers.
   Always keep the GET /runs/:id poll as fallback. The stream sends `snapshot` first.
 - 202→poll: analyze and document generation return queued/runId, not results. Poll or stream to completion.
@@ -553,3 +556,91 @@ for the full rationale.
   test actually took a screenshot and inspected the real DOM (`aria-selected`, `data-placeholder`)
   rather than just checking for console errors and a passing build — the build and lint were both
   clean the entire time this bug was present.
+
+## Billing: cancel / switch / packs (2026-07-27)
+
+Cancel-with-end-date, resume, plan switching (upgrade immediate / downgrade deferred), and a real
+`GET /plans`-fed plan grid replacing Sprint 10's placeholder "Upgrade to X" buttons — plus credit
+packs (already built the day before, Sprint 13) now sit below the plan grid. Full detail in
+`features/payments/payment.api.ts`'s own header comments; key confirmed-live facts:
+
+- ⚠️ Real `interval` enum is **`'month' | 'year'`** (Stripe's own convention) — NOT the doc's
+  guessed `'monthly' | 'yearly'`, confirmed by a live `VALIDATION_FAILED` probe on both
+  `POST /payments/subscription/switch` (where it's required) and `POST /payments/checkout` (where
+  it's now validated if present — a real change since Sprint 10's "no interval field exists"
+  finding, superseded here the same way `GET /plans` was superseded the day before).
+- `Subscription.pendingPlanKey: string | null` is real and confirmed live. Downgrading (switching
+  to a lower-ranked plan) does NOT change `planKey` immediately — it sets `pendingPlanKey` to the
+  target and applies at `currentPeriodEnd`. Upgrading applies immediately and `pendingPlanKey`
+  stays null. Reproduced exactly as the doc described.
+- ⚠️ **The switch-vs-checkout branch is real and load-bearing, and the backend now has its own
+  backstop for it**: confirmed live that `POST /payments/checkout` for an already-subscribed user
+  returns a distinct 409 `ALREADY_SUBSCRIBED` ("...use the switch-plan endpoint..."), not a normal
+  checkout session. `PlanCards` (`features/payments/components/plan-cards.tsx`) still does the
+  right thing itself (`hasActiveSub` routes to `switchPlan.mutate(...)`, never `checkout.mutate`)
+  — the backend guard is a backstop, not a substitute for getting the frontend branch right, per
+  the doc's own caution. This dangerous path (checkout while genuinely subscribed) was
+  deliberately NOT tested live end-to-end beyond the guard-check probe above, same restraint as
+  Sprint 11's `DELETE /users/me` — the risk of creating a real duplicate Stripe subscription on the
+  shared dev account outweighed the value of proving what the doc already documents clearly.
+- ⚠️ Switching to the plan you're **already effectively on** (matching `planKey`, not
+  `pendingPlanKey`) is rejected: `VALIDATION_FAILED` with an odd shape,
+  `fields: {"You": ["You are already on the \"ultimate\" plan."]}` — the useful message is INSIDE
+  `fields`, not the generic top-level `message` ("Validation failed."). `useSwitchPlan`'s `onError`
+  unpacks `Object.values(err.fields)[0]?.[0]` specifically for this, since the field key itself
+  ("You") is not a real form field to map onto.
+- ⚠️ **FIXED 2026-07-27, same day, follow-up backend patch**: `POST /payments/subscription/cancel`
+  used to 500 (`INTERNAL_ERROR`) while a plan switch was pending — reproduced twice, flagged to the
+  backend team, and confirmed fixed the same day via a fresh live probe before touching any code.
+  Cancel now succeeds in every state, and cancelling while a downgrade was pending clears the
+  pending change too (`pendingPlanKey → null`, `cancelAtPeriodEnd → true`). The client-side
+  workaround (disabling "Cancel subscription" while `pendingPlanKey` was set) has been REMOVED —
+  don't leave a dead guard in place after the underlying bug is actually fixed; that just makes a
+  working action look broken.
+- A real, working undo for a pending downgrade now exists: `POST
+  /payments/subscription/clear-pending-change` (confirmed live, returns the updated `Subscription`
+  with `pendingPlanKey: null`). `CurrentPlanCard`'s pending-downgrade banner and the current plan's
+  own card in `PlanCards` both offer a "Keep [plan]" button wired to this. ⚠️ The doc guessed a
+  distinct `NO_PENDING_CHANGE` error code for calling this with nothing pending — that code does
+  NOT exist; the backend reuses `NO_SUBSCRIPTION_TO_RESUME` for this case too (confirmed live),
+  distinguished only by message text. Don't switch on that text; the shared code is enough since
+  this path shouldn't be reachable from the UI anyway (the button only renders when a change is
+  genuinely pending).
+- Separately, switching to your CURRENT plan while a downgrade is pending (previously always
+  rejected — see above) now also succeeds and clears the pending change, confirmed live the same
+  day. `PlanCards` still routes this specific case through `clearPendingChange` rather than
+  `switchPlan`, since the intent reads more clearly in the code even though the backend accepts
+  both now.
+- `lib/error-actions.ts`'s `errorActions`/`actionFor` map is dead code — grepped the whole repo and
+  nothing calls it, despite CLAUDE.md's Sprint 0 rule describing it as the error-handling map.
+  Every mutation across every sprint (checkout, portal, switch, cancel, resume, clearPendingChange,
+  buyCreditPack, ...) has consistently handled `error.code` locally in its own `onError` instead.
+  Followed that established real convention here rather than the doc's suggestion to extend the
+  unused global map — noted here so a future session doesn't "fix" this by wiring up dead code
+  without first checking whether the codebase actually uses it (it doesn't).
+- **Previously disclosed side effect is now resolved**: the shared dev account had been left with
+  a genuinely scheduled downgrade (`pendingPlanKey: "pro"`) from the previous session's live
+  verification. Before writing any code this session, that state was found already cleared
+  (`pendingPlanKey: null`) — then re-verified the whole cancel/switch/clear-pending flow live
+  end-to-end anyway (schedule a downgrade → confirm cancel no longer 500s → resume → schedule again
+  → clear-pending-change → confirm clean) and left the account in the same clean state it started
+  in. No outstanding side effects from this session.
+- `DateLine` (`current-plan-card.tsx`) renders three distinct, mutually exclusive states so the
+  label always matches reality: `cancelAtPeriodEnd` → "Access ends [date]"; `pendingPlanKey` (no
+  cancel) → "Renews [date] as [plan]"; otherwise → "Renews [date]". A single ambiguous "period ends
+  [date]" string was deliberately rejected per the doc's own reasoning.
+- Real `GET /plans` prices/descriptions **changed between 2026-07-26 and 2026-07-27** (Pro went
+  from `priceMonthlyCents: 1900, description: null` to `999` with real marketing copy; Ultimate
+  `4900 → 2000`; `maxResumes`/`maxWorkspaces` on `ultimate` changed from `-1` (unlimited) to
+  `1000`) — confirmed by re-curling live mid-session after the rendered UI showed different numbers
+  than a memory from the day before predicted. Not a bug: plan data is live, admin-editable
+  content (via the Plan editor built the day before) and will keep changing — never treat a
+  previous session's captured price/description as a fact to assert against current behavior,
+  only as a point-in-time example. `formatDate()` (new, `lib/utils.ts`) renders an absolute date
+  ("Aug 25, 2026") for renewal/access-end/pending-switch dates — `timeAgo()`'s relative style
+  ("in 29 days") was judged worse for a date the user needs to plan around.
+- The Yearly interval toggle only renders if at least one real plan has `priceYearlyCents > 0`
+  (currently none do in this environment — all three are 0) — showing a fabricated "$0/yr" or
+  forcing every yearly click into a guaranteed `NOT_FOUND` was rejected in favor of just not
+  offering the choice until it's real, adapting automatically once an admin configures one.
+
