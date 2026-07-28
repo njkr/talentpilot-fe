@@ -300,6 +300,74 @@
 - `DOCUMENT_NOT_READY` (409, details `{status}`) is the real error code for calling download before
   `ready` — already known from the backend's ErrorCode enum before this sprint even started.
 
+## Admin panel (separate surface)
+
+- Lives in `app/(admin)/admin/...` (route group `(admin)` + a literal `admin/` segment, so URLs
+  are `/admin`, `/admin/costs`, etc.) with its own `AdminGuard`, `AdminSidebar`, `AdminTopbar` —
+  deliberately plainer/denser than the user app, per the sprint doc's intent. `features/admin/`
+  holds all the feature code.
+- DOUBLE GATE, confirmed live exactly as documented: `role: 'admin'` alone still 403s — the
+  account's email must ALSO be on the backend's `ADMIN_ALLOWED_EMAILS` allowlist. Confirmed live
+  by watching the same account go from `role:user` (403) → `role:admin` but not yet allowlisted
+  (still 403, identical response) → allowlisted (200). `AdminGuard` is the first gate only (role
+  check, client-side, UX). `AdminQueryBoundary` handles the second gate on every admin query.
+- ⚠️ The 403 for the email-allowlist gate reuses the generic `INTERNAL_ERROR` code (confirmed live)
+  — NOT a distinct code, and NOT `FORBIDDEN` as the Postman collection's saved example claims
+  (live wins over Postman again, same as Sprint 11's notification-preferences conflict).
+  `AdminQueryBoundary` therefore keys off `error.status === 403`, not `error.code` — a deliberate,
+  documented exception to CLAUDE.md's usual "switch on code" rule, justified because the backend
+  doesn't expose a distinct code for this case.
+- Step-level and run-level status use `RunStatus`/`StepStatus` (features/workspaces/workspace.types.ts),
+  NOT `WorkspaceStatus` — confirmed live a real run had `skipped` steps (attempt: 0). The shared
+  `StatusBadge` component's map doesn't cover `running`/`pending`/`skipped`, so the admin run
+  inspector uses its own local `RunStatusPill` instead, same reasoning as the existing
+  `JobStatusBadge`/`ResumeStatusBadge` split.
+- Real `AdminStep` shape has NO `durationMs` field — duration is computed client-side from
+  `startedAt`/`finishedAt`, same pattern as the run-level duration. Real `outputRef` field
+  (added Sprint 7) IS present and is shown under each step name — it's what lets an operator jump
+  from a step to what it produced (e.g. `cover_letters:7a5aadfd-…`).
+- ⚠️ `PromptVersion` real shape is RICHER than a Postman-only guess suggested: `model`, `createdAt`,
+  AND the full `systemTemplate` text are all real and confirmed live — an earlier pass wrongly
+  concluded `systemTemplate` didn't exist because Postman's saved example was a more abbreviated
+  illustrative snippet than the real response. Lesson: an example NOT showing a field is much
+  weaker evidence of absence than an example showing a DIFFERENT field name in its place — don't
+  treat the two the same way. The real, full prompt text is shown collapsed by default (`<details>`,
+  same pattern as the dead-letter queue's job-data disclosure) since some are 10+ lines.
+- All 9 of the sprint doc's guessed prompt keys are real (`resume_parsing, jd_analysis,
+  ats_grading, resume_optimization, cover_letter, interview, learning_path, company_synthesis,
+  salary`) — confirmed live, though `resume_parsing`/`interview`/`learning_path` currently have
+  zero versions in this environment (200 with an empty array, not an error). `cover_letter` has 4
+  real versions with genuinely detailed changeNotes documenting real prompt-engineering bug fixes
+  (e.g. the model signing cover letters with a literal "[Your Name]" despite instructions not to).
+- Activating a prompt version was tested live end-to-end (activated v3, confirmed the response and
+  the version list flipped, then re-activated v4 to restore the original live version before
+  finishing) — the real activate body is `{version: number}`; the sprint doc's own mutation
+  snippet sent an empty body, a real bug in the doc's own code independent of any shape confusion.
+- `AdminCosts` real shape confirmed live exactly matching Postman: `{since, byFeature: [{feature,
+  costUsd, calls}], byDay: [{day, costUsd}], topUsers: [{userId, costUsd}]}` — all `costUsd`/`calls`
+  values are STRINGS, converted once in the chart/list components, not at the API layer. There is
+  NO "failure rate by feature" data anywhere in the real response — the sprint doc's panel for it
+  isn't built; `byFeature` is shown instead (real data) as a simple single-hue magnitude bar list,
+  per the dataviz skill's "sometimes the answer isn't a categorical chart" guidance.
+- The daily-spend chart uses `recharts` (newly added dependency — this app had zero charting
+  libraries before) as a single-series area chart. Colors are the real design tokens' hex values
+  copied verbatim from `app/globals.css` (`#2563eb` primary, `#e5e7eb` border, `#6b7280`
+  ink-secondary) — recharts props take raw color values, not Tailwind classes, so this is the one
+  place CLAUDE.md's "no raw hex" rule doesn't apply, per the sprint doc's own note.
+- `DeadLetterJob` real shape is the raw BullMQ job object (`attemptsMade`, `failedReason`,
+  `timestamp` as raw Unix ms) — confirmed live exactly matching Postman, NOT the sprint doc's
+  guessed `attempts`/`failedAt`/`reason` field names. The 4 real queue names (confirmed via the
+  API doc's own architecture prose, cross-referencing two separate sections) are `pipeline,
+  resumes, emails, documents` — matches the sprint doc's own guess.
+- `AuditEntry` real shape confirmed live: `{id, userId, actorType, action, resourceType,
+  resourceId, ip, userAgent, metadata, createdAt}` — `resourceId` and `ip` are both real (not just
+  documented-but-unverified). Cursor-paginated (`nextCursor`/`hasMore`), same pattern as Sprint 10's
+  credit history.
+- A `role: 'admin'` user gets an "Admin" link in the avatar menu (components/layout/avatar-menu.tsx)
+  as a discoverability affordance only — AdminGuard/AdminQueryBoundary are the real checks, so
+  showing the link to a role-admin-but-not-yet-allowlisted user is fine.
+
+
 ## Billing & credits (Sprint 10)
 
 - ⚠️ `GET /plans` DOES NOT EXIST — confirmed three independent ways: live 404, absent from the
