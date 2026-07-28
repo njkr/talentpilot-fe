@@ -644,3 +644,46 @@ packs (already built the day before, Sprint 13) now sit below the plan grid. Ful
   forcing every yearly click into a guaranteed `NOT_FOUND` was rejected in favor of just not
   offering the choice until it's real, adapting automatically once an admin configures one.
 
+
+## Dashboard insights (expanded) — 2026-07-27
+
+Action items strip, score trend, credit burn, recurring skill gaps, and a 14-day activity strip
+added to `/dashboard` — still ONE `GET /dashboard` call, every card reads from the same batched
+response. Full detail in `features/dashboard/dashboard.api.ts`'s own header comment.
+
+- ⚠️ **The sprint doc re-guessed the PRE-EXISTING (Sprint 2) fields and got them wrong**, despite
+  those exact fields already being documented in CLAUDE.md's own "App shell & dashboard (Sprint 2)"
+  section above: it invented `credits` (real: `creditBalance`), `plan.limits.{maxResumes,
+  maxWorkspaces}` (doesn't exist — `plan` is still just `{key,name,status,monthlyCredits}`), and a
+  flat `counts`/`recentWorkspaces` (real: still nested `resumes{count,limit}` /
+  `workspaces.recent`). This is the exact failure mode Sprint 11 already named: a new doc's claim
+  about a system an earlier sprint already characterized needs checking against that earlier,
+  harder-won ground truth, not re-trusted fresh. Only the genuinely NEW fields — `scoreInsight`,
+  `creditInsight`, `topGaps`, `activity`, `attention`, `actionItems` — are real additions, and all
+  six matched the doc's guessed shape exactly once verified live.
+- `resumes.limit: 1000` is NOT a backend bug, despite the doc's own closing note flagging it as
+  one — it's real seeded `ultimate`-plan config, already documented the day before in this file's
+  "Billing: cancel / switch / packs" section (maxResumes/maxWorkspaces changed from -1 to 1000).
+  Doc authors keep re-flagging things earlier sessions already resolved; check CLAUDE.md first.
+- `scoreInsight.trend` is one point PER RUN, not per day — two runs on the same date produce two
+  entries with the same `date` (confirmed live). Not confirmed pre-sorted either. `ScoreTrendCard`
+  sorts client-side before charting rather than trusting response order.
+- The action items strip's `?filter=failed` link (its whole "guide, not just report" value
+  proposition) assumed `/workspaces` already supported a status filter — confirmed live it didn't,
+  neither client-side (the page had no filter logic at all) nor server-side (`GET
+  /workspaces?status=failed` 400s: `"property status should not exist"`). Added real client-side
+  `?filter=` support to `app/(app)/workspaces/page.tsx` (filters the already-fetched list, since
+  there's no server-side query param to use) rather than shipping a link that silently did nothing.
+- ⚠️ **Real bug caught only by an actual screenshot, not lint/build**: the Activity bar strip's
+  bars all rendered at the same flat fallback height regardless of real run count. Cause: the
+  percentage `height` was set on a `<div>` nested one level inside the flex item, not on the flex
+  item itself — a percentage height only resolves against a parent with a *definite* height, and a
+  flex item sized by `items-end` doesn't give its own children one, so the calc silently collapsed
+  to nothing every time. Fixed by moving the height (and the `flex-1`) onto the actual flex item
+  directly. Same lesson as the Payment Config Select bug two days earlier: build/lint/typecheck
+  cannot catch a CSS layout bug that produces a technically-valid, technically-rendering result —
+  only looking at the real screenshot did.
+- `EmptyState`'s `action` prop only accepts a single `{label, href|onClick}`, not arbitrary JSX —
+  the sprint doc's own `FirstRunEmptyState` passed it a `<div>` of two buttons, a real type
+  mismatch against the actual shared component (confirmed in `components/ui/empty-state.tsx`).
+  Built as `EmptyState` (no action) plus a manually-rendered two-button row below it instead.
