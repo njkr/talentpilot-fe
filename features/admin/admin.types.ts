@@ -54,6 +54,8 @@ export interface DeadLetterJob {
 // Real shape confirmed live — matches the Postman example exactly, INCLUDING the absence of any
 // "failure rate" data: no failureRate/model/failure_rate field anywhere in the real response, so
 // the sprint doc's "failure rate by feature" panel isn't built (there's nothing to show).
+// `byDay.calls`/`byDay.errors` added 2026-07-28 — confirmed live, both strings (raw SQL aggregate
+// output), same convention already used by `byFeature.calls`.
 export interface AdminCosts {
   since: string;
   byFeature: { feature: string; costUsd: string; calls: string }[];
@@ -86,4 +88,121 @@ export interface AuditEntry {
   ip?: string | null;
   metadata?: Record<string, unknown> | null;
   createdAt: string;
+}
+
+// ── Configurable payments (Sprint 13, confirmed live 2026-07-26) ──────────────────────────────
+// This whole feature area is absent from docs/API-Full-Documentation.txt entirely, and the
+// Postman collection only carries REQUEST examples (create/update bodies) with zero saved
+// response bodies — the first time in this project neither a live backend nor a doc/Postman
+// response example was available at the start. Every shape below was pulled directly off the
+// running backend (role:admin + allowlisted account) before writing any UI, same standard as
+// every other sprint, just via curl instead of a saved example.
+
+// Richer than the PUBLIC GET /plans shape (features/payments/payment.types.ts's CreditPack
+// sibling, `Plan`, isn't defined there — public /plans returns flat maxResumes/maxWorkspaces with
+// NO limits.regenPerDay, active, stripeProductId, or stripePriceIds at all). Admin-only fields
+// confirmed live: stripePriceIds.yearly can be the literal empty string "" (not just absent) on a
+// plan whose yearly price was never actually configured — treat "" as "no yearly price" same as
+// undefined, don't render it as a real price id.
+export interface AdminPlan {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  priceMonthlyCents: number;
+  priceYearlyCents: number;
+  monthlyCredits: number;
+  limits: { maxResumes: number; maxWorkspaces: number; regenPerDay: number };
+  stripeProductId: string | null;
+  stripePriceIds: { monthly?: string; yearly?: string };
+  active: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlanInput {
+  key: string; // immutable after create — omit on update
+  name: string;
+  description?: string;
+  priceMonthlyCents: number;
+  priceYearlyCents: number;
+  monthlyCredits: number;
+  limits: { maxResumes: number; maxWorkspaces: number; regenPerDay: number };
+  displayOrder: number;
+}
+
+// Confirmed live. `stripePriceId` is SINGULAR (one `mode: payment` price, not a monthly/yearly
+// pair) — credit packs are one-time purchases, unlike plans. Also confirmed live: toggling
+// `active` on an archived pack back to true creates a BRAND NEW Stripe price (the old one stays
+// archived) even with no priceCents change — same "prices are immutable" rule PATCH's own
+// description states for a real price edit, just triggered by reactivation too.
+export interface AdminCreditPack {
+  id: string;
+  name: string;
+  credits: number;
+  priceCents: number;
+  stripeProductId: string | null;
+  stripePriceId: string | null;
+  active: boolean;
+  displayOrder: number;
+  bestValue: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreditPackInput {
+  name: string;
+  credits: number;
+  priceCents: number;
+  displayOrder?: number;
+  bestValue?: boolean;
+}
+
+// Confirmed live exactly — every field the doc's form guessed is real, plus id/updatedAt/updatedBy
+// which the doc's own type didn't list but the real response includes.
+export interface PaymentConfig {
+  id: number;
+  signupCreditGrant: number;
+  referrerReward: number;
+  refereeReward: number;
+  referralQualifyingEvent: "signup" | "email_verified" | "first_analysis" | "first_payment" | string;
+  maxReferralRewardsPerUser: number;
+  analyzeCost: number;
+  coverLetterRegenCost: number;
+  interviewFeedbackCost: number;
+  referralsEnabled: boolean;
+  creditPacksEnabled: boolean;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+// Confirmed live by actually registering a throwaway account with a real ?ref= code and reading
+// it back here. ⚠️ `status` real value observed: "signed_up" — NOT the doc's guessed
+// invited/qualified/rewarded vocabulary (those are the STATS bucket names from GET /referrals/me,
+// not the row's own enum). The value after the referee completes the qualifying event (first
+// analysis, per payment_config) was never observed live — email verification blocked driving the
+// test account further. Render defensively (humanizeReferralStatus below) rather than a hardcoded
+// switch that would silently show nothing for an unconfirmed value.
+export interface AdminReferralRow {
+  id: string;
+  referrerId: string;
+  refereeId: string | null;
+  refereeEmail: string | null;
+  status: string;
+  rewardGranted: boolean;
+  qualifiedAt: string | null;
+  createdAt: string;
+}
+
+export function humanizeReferralStatus(status: string): string {
+  const known: Record<string, string> = { signed_up: "Signed up", qualified: "Qualified", rewarded: "Rewarded" };
+  return known[status] ?? status.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+// Confirmed live.
+export interface AdminReferralStats {
+  totalInvited: number;
+  totalQualified: number;
+  totalCreditsPaid: number;
 }

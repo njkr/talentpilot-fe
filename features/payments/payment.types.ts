@@ -7,6 +7,18 @@
 // Stripe's own Checkout page is the only real source for what a plan costs.
 export type PlanKey = "free" | "pro" | "ultimate";
 
+// Public GET /credit-packs shape, confirmed live 2026-07-26 — deliberately thinner than the admin
+// AdminCreditPack type (features/admin/admin.types.ts): no stripeProductId/stripePriceId/active/
+// createdAt/updatedAt, those are admin-only.
+export interface CreditPack {
+  id: string;
+  name: string;
+  credits: number;
+  priceCents: number;
+  bestValue: boolean;
+  displayOrder: number;
+}
+
 // Real shape confirmed live (curl) + Postman saved example, matching exactly. Richer than a bare
 // Stripe mirror — already merged with the plan's own limits, so the billing page never needs a
 // separate plan-lookup call for the CURRENT plan.

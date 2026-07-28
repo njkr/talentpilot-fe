@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ComponentType, SVGProps } from "react";
 import { Slot, Slottable } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
@@ -23,19 +23,25 @@ const buttonVariants = cva(
   },
 );
 
+type IconComponent = ComponentType<SVGProps<SVGSVGElement>>;
+
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   loading?: boolean;
   asChild?: boolean; // render as a child element (e.g. a Next <Link>) via Radix Slot
+  // A leading Heroicon (24/outline, matching every icon already used in this project — see
+  // CLAUDE.md's design tokens rule). While `loading` is true the Spinner takes this same leading
+  // slot instead, so a button never shows both at once.
+  icon?: IconComponent;
 }
 
-export function Button({ className, variant, size, loading, asChild, children, disabled, ...props }: ButtonProps) {
+export function Button({ className, variant, size, loading, asChild, icon: Icon, children, disabled, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   return (
     <Comp className={cn(buttonVariants({ variant, size }), className)} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
-      {loading && <Spinner className="h-4 w-4" />}
+      {loading ? <Spinner className="h-4 w-4 shrink-0" /> : Icon ? <Icon className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
       {/* Slot (asChild) requires exactly one element child to clone onto — Slottable marks which
-          child that is, so the spinner can still render as a sibling instead of breaking Slot's
-          "single child" requirement. A no-op wrapper when asChild is false. */}
+          child that is, so the spinner/icon can still render as a sibling instead of breaking
+          Slot's "single child" requirement. A no-op wrapper when asChild is false. */}
       <Slottable>{children}</Slottable>
     </Comp>
   );

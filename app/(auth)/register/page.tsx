@@ -1,6 +1,8 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -22,7 +24,7 @@ const schema = z.object({
 });
 type Form = z.infer<typeof schema>;
 
-export default function RegisterPage() {
+function RegisterPageInner() {
   const {
     register,
     handleSubmit,
@@ -30,20 +32,26 @@ export default function RegisterPage() {
     formState: { errors },
   } = useForm<Form>({ resolver: zodResolver(schema) });
   const mutation = useRegister();
+  // ?ref=CODE from an invite link (features/referrals) — passed straight through to registration,
+  // never shown as a form field.
+  const referralCode = useSearchParams().get("ref") ?? undefined;
 
   const onSubmit = (values: Form) =>
-    mutation.mutate(values, {
-      onError: (err) => {
-        // Duplicate email -> 409 ALREADY_EXISTS (Problems.emailAlreadyRegistered) -> inline on the email field.
-        if (err instanceof ApiError && err.code === "ALREADY_EXISTS") {
-          setError("email", { message: "An account with this email already exists" });
-          return;
-        }
-        if (!applyFieldErrors(err, setError)) {
-          setError("root", { message: (err as ApiError).message });
-        }
+    mutation.mutate(
+      { ...values, referralCode },
+      {
+        onError: (err) => {
+          // Duplicate email -> 409 ALREADY_EXISTS (Problems.emailAlreadyRegistered) -> inline on the email field.
+          if (err instanceof ApiError && err.code === "ALREADY_EXISTS") {
+            setError("email", { message: "An account with this email already exists" });
+            return;
+          }
+          if (!applyFieldErrors(err, setError)) {
+            setError("root", { message: (err as ApiError).message });
+          }
+        },
       },
-    });
+    );
 
   return (
     <AuthShell title="Create your account" subtitle="Start optimising your applications">
@@ -69,5 +77,15 @@ export default function RegisterPage() {
         </Link>
       </p>
     </AuthShell>
+  );
+}
+
+export default function RegisterPage() {
+  // useSearchParams() opts the page out of static rendering — same Suspense-wrapping convention
+  // as app/(app)/billing/page.tsx.
+  return (
+    <Suspense>
+      <RegisterPageInner />
+    </Suspense>
   );
 }

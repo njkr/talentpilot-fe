@@ -11,6 +11,16 @@
 - Server state → React Query only. Zustand → client/UI state only. Never store API data in Zustand.
 - Access token in memory only. Never localStorage. Refresh is an httpOnly cookie the browser carries.
 - Design tokens only — no raw hex, no arbitrary spacing. rounded-md/lg/xl, shadow-sm/md only.
+- Buttons carry a relevant leading Heroicon (24/outline, matching the icon library already used
+  everywhere else — CLAUDE.md's Sprint 11 polish pass grep-audited the whole repo for non-Heroicons
+  icons and found none). `components/ui/button.tsx`'s `Button` takes an `icon` prop for this
+  (`<Button icon={PlusIcon}>New plan</Button>`) — while `loading` is true the Spinner takes that
+  same leading slot instead, so a button never shows both. Works with `asChild` too (the icon
+  renders as a sibling to the Slotted child, same mechanism the loading spinner already used).
+  Applied 2026-07-27 across every billing/admin surface (Sprint 13/14); the rest of the app's
+  ~90 remaining `<Button>` usages (resumes, jobs, workspaces, versions, documents, auth, settings)
+  predate this convention and haven't been retrofitted yet — apply it to any of those the next time
+  you're genuinely touching that file, rather than treating an untouched screen as broken.
 - Radix UI primitives (unstyled, accessible) painted with Tailwind tokens for Dialog/Drawer/Menu/
   Popover/Tooltip/Select/Checkbox/Tabs/Toast/Avatar — this is what components/ui is built on. Don't
   hand-roll a Select/Dialog/Tooltip and don't reach for MUI; MUI isn't installed. If a future sprint
@@ -466,3 +476,80 @@
   pass. NOT done: retrofitting every `Button` size to a 44px touch target (`sm`/`md`/`lg` are
   32/36/40px) — flagged rather than silently changed, since it's a foundational, already-shipped
   design-system dimension change with broad blast radius, not a scoped bug fix.
+
+## Configurable payments (admin + user) — Sprint 13, 2026-07-26
+
+A new backend feature area entirely: admin plan/credit-pack/payment-config editors + referral
+oversight, plus user-facing buy-credits and invite-and-earn screens. This whole area was absent
+from `docs/API-Full-Documentation.txt` and the Postman collection had request shapes only (create/
+update bodies) with **zero saved response examples** — the first sprint in this project where
+neither a live backend nor a doc/Postman response example was available at the start. Backend was
+brought up mid-session specifically to verify every shape live (role:admin account, same as the
+admin panel build) before writing any UI — see `features/admin/admin.types.ts`'s own header comment
+for the full rationale.
+
+- Real `AdminPlan` (`GET /admin/plans`) matches the sprint doc's guess almost exactly: `limits`
+  IS nested (`{maxResumes, maxWorkspaces, regenPerDay}`), `stripePriceIds.yearly` can be the
+  **literal empty string `""`**, not just absent, on a plan whose yearly price was never
+  configured — treat `""` the same as undefined, don't render it as a real price id.
+- Real `AdminCreditPack` (`GET /admin/credit-packs`) has `stripePriceId` **singular** (one
+  `mode: payment` price) — NOT the plan's `monthly`/`yearly` pair, since packs are one-time
+  purchases. Confirmed live: reactivating an archived pack (PATCH `{active: true}`, no price
+  change) creates a **brand-new** Stripe price — the "prices are immutable" rule applies to
+  reactivation too, not just an actual price edit.
+- Confirmed live: `POST /admin/plans` and `POST /admin/credit-packs` both default new records to
+  `active: true`. (The two credit packs seeded in this dev environment happened to be archived —
+  that was someone's deliberate prior action, not the create default; verified by creating and
+  immediately archiving a real throwaway pack/plan.)
+- `PaymentConfig` (`GET/PATCH /admin/payment-config`) matches the sprint doc's guessed field list
+  exactly (`analyzeCost, coverLetterRegenCost, interviewFeedbackCost, signupCreditGrant,
+  referrerReward, refereeReward, referralQualifyingEvent, maxReferralRewardsPerUser,
+  referralsEnabled, creditPacksEnabled`), plus `id`/`updatedAt`/`updatedBy` the doc's type omitted.
+  Real default `referralQualifyingEvent` in this env is `"first_analysis"`, matching the doc's own
+  "(recommended)" framing.
+- `FEATURE_DISABLED` (403, `details: {feature: "credit_packs"}`) is a REAL error code, confirmed
+  live by actually toggling `creditPacksEnabled` off and hitting checkout — it is NOT in the
+  standing [[backend_error_catalogue]] memory (that catalogue predates this sprint's backend
+  changes; add it there too). `useBuyCreditPack` handles it with a plain toast.
+- Public `GET /plans` and `GET /credit-packs` return deliberately thinner shapes than their admin
+  counterparts — no `active`/`stripeProductId`/`stripePriceId(s)`/`createdAt`/`updatedAt`, and
+  public plans are FLAT (`maxResumes`/`maxWorkspaces` top-level, no `limits.regenPerDay` at all) —
+  do not reuse `AdminPlan`/`AdminCreditPack` for anything rendered to a regular user.
+- ⚠️ Real `AdminReferralRow.status` (confirmed live by actually registering a throwaway account
+  with a real `?ref=` code and reading it back via `GET /admin/referrals`): the value is
+  **`"signed_up"`** — NOT the doc's guessed `invited`/`qualified`/`rewarded` vocabulary (those are
+  the STATS bucket names from `GET /referrals/me`, a different endpoint, not the row's own enum).
+  The status after a referee completes the qualifying event was never observed live (email
+  verification blocked driving the test account further) — `humanizeReferralStatus()`
+  (`features/admin/admin.types.ts`) falls back to a generic title-case for any value not in its
+  small known-map, same pattern as `humanizeReason()` for credit history (Sprint 10).
+- `POST /auth/register` accepts an optional `referralCode` field not in the original Sprint 1
+  type (`features/auth/auth.api.ts`) — confirmed live it associates the referral immediately
+  (visible in `GET /admin/referrals` right after register, before the referee even verifies their
+  email). Register page reads `?ref=` via `useSearchParams()` and passes it straight through,
+  never as a visible form field; wrapped in `<Suspense>` per the existing `useSearchParams()`
+  convention (see billing page).
+- Credit-pack purchase confirmation (`?purchase=success` on `/billing`) can't use the
+  subscription flow's `currentPeriodEnd`-goes-non-null trick (credits have no equivalent field) —
+  instead the pre-purchase balance is stashed in `sessionStorage` right before the Stripe redirect
+  (`CreditPacks`'s `PRE_PURCHASE_BALANCE_KEY`) and polled against via `useCredits(pollUntilAbove)`
+  until exceeded, same 40s bail-out timer as the subscription flow.
+- ⚠️ **Real, load-bearing bug found and fixed via live browser smoke-testing (Playwright), not
+  just curl**: `PaymentConfigForm`'s Radix `Select`/`Switch` are CONTROLLED components (bound via
+  react-hook-form's `Controller`), unlike the rest of the codebase's `register()`'d plain inputs.
+  Mounting the form with placeholder `defaultValues` and calling `reset()` in a `useEffect` once
+  the config query resolved — the exact working pattern `profile-settings.tsx` uses for plain
+  inputs — left the Select's displayed value visibly stuck blank (every option showing
+  `aria-selected="false"` in the real DOM) even though `reset()` was provably called with the
+  correct data (confirmed via a temporary debug render). Plain `register()`'d fields update fine
+  post-mount; Controller-bound fields did not, in this react-hook-form 7.82 setup. Fixed by
+  splitting into a data-fetching wrapper + an inner `PaymentConfigFields` component that only
+  mounts once `config` is already loaded, so `useForm`'s `defaultValues` are correct from the
+  very first render — no async `reset()` needed for the initial sync at all, matching how
+  `PromptManagement` (Sprint "Admin panel") and the Plan/Pack editor dialogs already avoid this
+  by only ever mounting with data already in hand. **Lesson for any future form with a
+  Controller-bound Select/Switch fed by an async query: don't reset() into it after mount — gate
+  the whole form behind the data being loaded instead.** This was caught only because the smoke
+  test actually took a screenshot and inspected the real DOM (`aria-selected`, `data-placeholder`)
+  rather than just checking for console errors and a passing build — the build and lint were both
+  clean the entire time this bug was present.

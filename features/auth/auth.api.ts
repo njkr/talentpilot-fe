@@ -8,7 +8,10 @@ interface SessionResponse {
 }
 
 export const authApi = {
-  register: (body: { email: string; password: string }) => api.post<User>("/auth/register", body),
+  // referralCode confirmed live (2026-07-26): accepted by /auth/register, associates the new
+  // account with the referrer immediately (visible in GET /admin/referrals right after register,
+  // status "signed_up" before the referee even verifies their email).
+  register: (body: { email: string; password: string; referralCode?: string }) => api.post<User>("/auth/register", body),
 
   verifyEmail: (body: { email: string; code: string }) => api.post<SessionResponse>("/auth/verify-email", body),
 

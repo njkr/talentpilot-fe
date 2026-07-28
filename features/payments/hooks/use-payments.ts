@@ -54,3 +54,27 @@ export function usePortal() {
   });
 }
 
+export function useCreditPacks() {
+  return useQuery({ queryKey: ["credit-packs"], queryFn: paymentApi.listCreditPacks });
+}
+
+export function useBuyCreditPack() {
+  return useMutation({
+    mutationFn: ({ packId, idempotencyKey }: { packId: string; idempotencyKey: string }) => paymentApi.buyCreditPack(packId, idempotencyKey),
+    onSuccess: ({ url }) => {
+      window.location.href = url; // hand off to Stripe Checkout, same as plan checkout
+    },
+    onError: (err) => {
+      if (!(err instanceof ApiError)) return;
+      if (err.code === "FEATURE_DISABLED") {
+        toast("Credit packs aren't available right now.", "error");
+        return;
+      }
+      if (err.code === "NOT_FOUND") {
+        toast("This pack isn't available right now.", "error");
+        return;
+      }
+      toast(err.message, "error");
+    },
+  });
+}
