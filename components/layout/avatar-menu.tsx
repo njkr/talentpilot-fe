@@ -22,6 +22,10 @@ export function AvatarMenu() {
           <Menu.Separator className="my-1 h-px bg-border" />
           <MenuLink href="/settings">Settings</MenuLink>
           <MenuLink href="/billing">Billing</MenuLink>
+          {/* Only a discoverability affordance — AdminGuard is the real check. A role-admin user
+              still needs to be on the backend's email allowlist, so showing this link to every
+              role:admin user (even one not yet allowlisted) is fine; the guard handles the rest. */}
+          {user?.role === "admin" && <MenuLink href="/admin">Admin</MenuLink>}
           <Menu.Separator className="my-1 h-px bg-border" />
           <Menu.Item
             onSelect={() => logout.mutate()}

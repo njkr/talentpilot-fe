@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUiStore } from "@/stores/ui.store";
 import { Tooltip } from "@/components/ui/tooltip";
+import { Logo } from "./logo";
 import { navItems } from "./nav-items";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +22,7 @@ export function Sidebar() {
       )}
     >
       <div className="flex h-14 items-center px-4">
-        <span className={cn("font-bold text-primary", collapsed && "sr-only")}>TalentPilot</span>
+        <Logo size={24} showWordmark={!collapsed} wordmarkClassName="text-base" />
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-2">

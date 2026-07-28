@@ -36,6 +36,8 @@
   --shadow-md: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
 
   --font-sans: var(--font-inter), system-ui, sans-serif;
+  /* Brand wordmark only (components/layout/logo.tsx) — body copy stays on font-sans. */
+  --font-display: var(--font-plus-jakarta-sans), var(--font-inter), system-ui, sans-serif;
 }
 
 @layer base {

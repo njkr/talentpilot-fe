@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
+import { Logo } from "./logo";
 import { navItems } from "./nav-items";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +22,11 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/40 lg:hidden data-[state=open]:animate-in data-[state=open]:fade-in" />
         <Dialog.Content className="fixed inset-y-0 left-0 z-50 w-64 bg-card p-4 lg:hidden data-[state=open]:animate-in data-[state=open]:slide-in-from-left">
-          <Dialog.Title className="mb-6 font-bold text-primary">TalentPilot</Dialog.Title>
+          <Dialog.Title asChild>
+            <div className="mb-6">
+              <Logo size={24} wordmarkClassName="text-base" />
+            </div>
+          </Dialog.Title>
           <nav className="space-y-1">
             {navItems.map(({ href, label, icon: Icon }) => {
               const active = pathname === href || pathname.startsWith(`${href}/`);
