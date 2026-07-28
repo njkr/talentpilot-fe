@@ -206,3 +206,49 @@ export interface AdminReferralStats {
   totalQualified: number;
   totalCreditsPaid: number;
 }
+
+// ── Third-party integration usage tracking (2026-07-28) ────────────────────────────────────────
+export const INTEGRATION_PROVIDERS = ["openai", "resend", "tavily", "stripe", "s3"] as const;
+export type IntegrationProvider = (typeof INTEGRATION_PROVIDERS)[number];
+
+// GET /admin/integrations — last-24h snapshot, all 5 providers in one call. Confirmed live:
+// `calls`/`errors` are NUMBERS here — unlike the per-provider daily endpoint below, which uses the
+// same field names for STRINGS. `costUsd` is present ONLY on the `openai` row; the key is genuinely
+// absent (not null) on the other four — don't render a $0.00/blank cost cell for them.
+export interface AdminIntegrationsOverview {
+  since: string;
+  providers: { provider: IntegrationProvider; calls: number; errors: number; costUsd?: string }[];
+}
+
+// GET /admin/integrations/:provider/daily?days=N — one provider's per-day history. Confirmed live:
+// `calls`/`errors`/`costUsd` are all STRINGS (raw SQL aggregate), and `costUsd` is absent for
+// non-openai providers here too (confirmed by actually calling this for "resend", not just assumed
+// by symmetry with the overview). `provider` path param validated server-side against
+// INTEGRATION_PROVIDERS — anything else 400s VALIDATION_FAILED with the message under
+// `error.fields.Unknown[0]` (a plain BadRequestException(string), not a dedicated field name) —
+// unreachable from a UI that only ever sends values from a hardcoded provider Select.
+export interface AdminIntegrationDaily {
+  provider: IntegrationProvider;
+  since: string;
+  days: { day: string; calls: string; errors: string; costUsd?: string }[];
+}
+
+// ── Admin user directory (2026-07-28) ───────────────────────────────────────────────────────
+export type AdminUserStatus = "active" | "suspended" | "deleted";
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  role: "user" | "admin";
+  status: AdminUserStatus;
+  isVerified: boolean;
+  createdAt: string;
+  lastLoginAt: string | null; // nullability to be confirmed live once the backend is reachable
+  planKey: string; // "free" default for no subscription row
+  planName: string; // "Free" default
+  totalSpendUsd: string; // raw SQL aggregate — string, same convention as AdminCosts.byFeature.costUsd
+  spendLastNDaysUsd: string; // fetched, NOT rendered — no `days` filter control was requested
+  resumeCount: number;
+  coverLetterCount: number;
+  referrals: { invited: number; qualified: number };
+}

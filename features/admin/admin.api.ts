@@ -12,6 +12,11 @@ import type {
   PaymentConfig,
   AdminReferralRow,
   AdminReferralStats,
+  AdminIntegrationsOverview,
+  AdminIntegrationDaily,
+  IntegrationProvider,
+  AdminUserRow,
+  AdminUserStatus,
 } from "./admin.types";
 
 export const adminApi = {
@@ -49,4 +54,11 @@ export const adminApi = {
   // Cursor-paginated, newest first (confirmed live, same shape as GET /admin/audit).
   listReferrals: (params: { cursor?: string }) => api.list<AdminReferralRow[]>("/admin/referrals", params),
   getReferralStats: () => api.get<AdminReferralStats>("/admin/referrals/stats"),
+
+  getIntegrationsOverview: () => api.get<AdminIntegrationsOverview>("/admin/integrations"),
+  getIntegrationDaily: (provider: IntegrationProvider, days: number) => api.get<AdminIntegrationDaily>(`/admin/integrations/${provider}/daily`, { days }),
+
+  listUsers: (params: { cursor?: string; search?: string; status?: AdminUserStatus; days?: number }) => api.list<AdminUserRow[]>("/admin/users", params),
+  suspendUser: (id: string) => api.post<{ status: AdminUserStatus }>(`/admin/users/${id}/suspend`),
+  activateUser: (id: string) => api.post<{ status: AdminUserStatus }>(`/admin/users/${id}/activate`),
 };

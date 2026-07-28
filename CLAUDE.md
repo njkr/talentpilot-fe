@@ -380,14 +380,18 @@
   as a discoverability affordance only — AdminGuard/AdminQueryBoundary are the real checks, so
   showing the link to a role-admin-but-not-yet-allowlisted user is fine.
 
-
 ## Billing & credits (Sprint 10)
 
-- ⚠️ `GET /plans` DOES NOT EXIST — confirmed three independent ways: live 404, absent from the
-  44-endpoint API reference in docs/API-Full-Documentation.txt, absent from the Postman collection.
-  There is no catalog endpoint for prices/features of plans other than the caller's own current
-  one. The billing page therefore does NOT show a multi-plan comparison grid — CLAUDE.md's "never
-  invent a field the API doesn't return" extends to never inventing this endpoint's data either.
+- ⚠️ **SUPERSEDED 2026-07-26 (see "Configurable payments" below):** this bullet originally said
+  `GET /plans` DOES NOT EXIST, confirmed three ways at the time (live 404, absent from the API doc,
+  absent from Postman). That was true on 2026-07-25. The Sprint 13 configurable-payments backend
+  update added it for real — confirmed live the very next day. The billing page STILL does not show
+  a multi-plan comparison grid (that part of the original decision stands; nothing consumes the now-
+  real endpoint yet), but "the endpoint doesn't exist" is no longer the reason — it's simply an
+  unbuilt feature now. If a future session builds a real plan-comparison grid, `GET /plans` is
+  confirmed available for it. Lesson: an endpoint's absence is a point-in-time fact about a running
+  backend, not a permanent architectural constraint — re-verify rather than trusting an old "doesn't
+  exist" note forever once a new backend doc/session arrives.
   Upgrade buttons (features/payments/components/upgrade-plans.tsx) call checkout directly by plan
   key with zero fabricated pricing/feature copy; Stripe's own Checkout page is the only real source
   shown for what a plan costs, immediately after clicking "Upgrade to Pro/Ultimate".
@@ -644,7 +648,6 @@ packs (already built the day before, Sprint 13) now sit below the plan grid. Ful
   forcing every yearly click into a guaranteed `NOT_FOUND` was rejected in favor of just not
   offering the choice until it's real, adapting automatically once an admin configures one.
 
-
 ## Dashboard insights (expanded) — 2026-07-27
 
 Action items strip, score trend, credit burn, recurring skill gaps, and a 14-day activity strip
@@ -768,3 +771,158 @@ things a future session needs to know before touching any of this:
   here seems to be missing again later, check the actual filesystem before concluding it was never
   built; this has already happened once.
 
+## Admin: third-party integration usage tracking — 2026-07-28 (built same day)
+
+New backend admin API surfacing historical usage/error counts for OpenAI, Resend, Tavily, Stripe,
+and S3. Was left as a doc-only note earlier in the day; built out later the same session. No live
+reachability check by design (historical stats only, a deliberate backend scope decision).
+
+- `GET /admin/integrations` — last-24h overview across all 5 providers. Real shape (confirmed live):
+  ```json
+  {
+    "since": "2026-07-27T14:03:28.870Z",
+    "providers": [
+      { "provider": "openai", "calls": 43, "errors": 0, "costUsd": "0.154648" },
+      { "provider": "resend", "calls": 2, "errors": 0 },
+      { "provider": "tavily", "calls": 4, "errors": 0 },
+      { "provider": "stripe", "calls": 1, "errors": 0 },
+      { "provider": "s3", "calls": 2, "errors": 0 }
+    ]
+  }
+  ```
+  Only `openai` ever carries `costUsd` — the other four have no per-call cost tracked at all; don't
+  render a `$0.00`/blank cost cell for them, omit the column entirely for those rows.
+- `GET /admin/integrations/:provider/daily?days=30` — per-provider daily history. `provider` is one
+  of `openai | resend | tavily | stripe | s3` (400 `VALIDATION_FAILED` on anything else, with the bad
+  value surfaced under `error.fields.Unknown[0]`, not a dedicated field name — an artifact of this
+  being a plain `BadRequestException(string)` running through the same class-validator-shaped error
+  mapper as everywhere else, confirmed live). Real shape:
+  ```json
+  {
+    "provider": "openai",
+    "since": "2026-07-21T13:52:11.166Z",
+    "days": [
+      { "day": "2026-07-21T00:00:00.000Z", "calls": "4", "errors": "0", "costUsd": "0.001359" }
+    ]
+  }
+  ```
+  ⚠️ `calls`/`errors`/`costUsd` here are **strings** (straight off a raw SQL aggregate), but the
+  overview endpoint's `calls`/`errors` above are **numbers** — the two endpoints don't type the same
+  field name consistently; don't assume one shared type covers both.
+- `GET /admin/costs` (existing, already wired to `CostDashboard` via `useAdminCosts`) — `byDay`
+  entries now also carry `calls`/`errors` (both strings, same as `byFeature.calls` already is):
+  `{ "day": "...", "costUsd": "0.081200", "calls": "39", "errors": "0" }`. `AdminCosts.byDay` in
+  `features/admin/admin.types.ts` needs both new fields added.
+- Auth: identical `AdminGuard` as every other `/admin/*` route (role `admin` + email allowlist) — no
+  new auth/session work needed on this side.
+- ⚠️ Re-verified live before building (same day, a few hours after the doc-only note above was
+  written): every shape above held exactly, including the one thing the note itself flagged as
+  unconfirmed — whether `costUsd` is absent per-day for non-openai providers too (not just at the
+  overview level). Confirmed live by actually calling `GET /admin/integrations/resend/daily`: yes,
+  absent there too, same as the overview.
+- Built as `features/admin/components/integrations-dashboard.tsx` (new) at `/admin/integrations`,
+  extending `admin.types.ts`/`admin.api.ts`/`hooks/use-admin.ts` in place per the established
+  one-module-per-domain convention (no new feature module). Nav entry added to
+  `admin-nav-items.ts` with `PuzzlePieceIcon`. Overview is a `divide-y` row list (same convention
+  as `topUsers`/audit log — no Table component exists or was added). Per-provider daily drill-down
+  reuses `prompt-management.tsx`'s `<Select>` + hardcoded-key-array + fetch-detail pattern, not a
+  dynamic route (that pattern is reserved in this codebase for deep-linkable resources like run
+  details, not admin-initiated exploratory drill-downs). Which metric is primary (cost vs. calls)
+  is decided from the data itself (`days.some(d => d.costUsd !== undefined)`), not a hardcoded
+  `provider === "openai"` check, so it stays correct if the backend ever tracks cost for another
+  provider.
+- The daily-spend chart (`cost-dashboard.tsx`'s original `DailySpendChart`) was extracted into a
+  new shared `features/admin/components/daily-metrics-chart.tsx` (`DailyMetricsChart`) so both the
+  existing costs page and the new per-provider drill-down render off one component instead of two
+  copies of the same recharts config. `calls`/`errors` are surfaced as extra lines in a custom
+  Tooltip `content` render-prop (needed since they have no chart series of their own — only
+  reachable via `payload[0].payload`), not a second overlaid series/axis — dollars and raw counts
+  don't share a scale, and this matches the established "restraint over decorative complexity"
+  taste from the dashboard-insights sprint (the score-trend sparkline has no axes at all). Verified
+  by actually hovering the chart and screenshotting the tooltip, not just checking for console
+  errors — the `contentStyle`→custom-`content` prop swap was flagged in planning as the
+  highest-risk change (a missed recharts internal prop can silently render nothing).
+- Updated Postman collection/environment (`docs/TalentPilot-API.postman_collection.json` /
+  `docs/TalentPilot-API.postman_environment.json`) copied over from the backend repo, replacing the
+  stale pair — new `"Admin — Integrations"` folder (Overview + Daily History requests) plus the
+  refreshed `"Cost Breakdown"` response example.
+
+## Admin: user management API — 2026-07-28 (built same day)
+
+Backend admin API for browsing every signed-up user and revoking/granting their access. Built and
+live-verified end-to-end (curl + Playwright) the same day this doc-only note was originally written.
+
+- `GET /admin/users?cursor=&limit=&search=&status=&days=` — cursor-paginated (same
+  `{data, hasMore, nextCursor}` shape as `/admin/integrations`), `search` is an email substring
+  match, `status` filters to `active|suspended|deleted`, `days` (default 30) controls the windowed
+  spend figure. Real shape per row:
+  ```json
+  {
+    "id": "8f14e45f-ceea-467e-bd97-37e33f8a2e9c",
+    "email": "jane.doe@example.com",
+    "role": "user",
+    "status": "active",
+    "isVerified": true,
+    "createdAt": "2026-07-20T10:15:00.000Z",
+    "lastLoginAt": "2026-07-28T09:30:00.000Z",
+    "planKey": "pro",
+    "planName": "Pro",
+    "totalSpendUsd": "2.348900",
+    "spendLastNDaysUsd": "0.512300",
+    "resumeCount": 3,
+    "coverLetterCount": 5,
+    "referrals": { "invited": 2, "qualified": 1 }
+  }
+  ```
+  ⚠️ Mixed types worth getting right in the frontend model: `totalSpendUsd`/`spendLastNDaysUsd` are
+  **strings** (raw SQL aggregate, same reason `AdminCosts.byFeature.costUsd` already is one), but
+  `resumeCount`/`coverLetterCount`/`referrals.invited`/`referrals.qualified` are real **numbers**.
+  `planKey`/`planName` default to `"free"`/`"Free"` for any user with no `subscriptions` row (the
+  common case — see the payments sprint notes above for why).
+- `POST /admin/users/:id/suspend` and `POST /admin/users/:id/activate` — `{ status: "suspended" }` /
+  `{ status: "active" }` on success. `suspend` 400s with a brand-new error code,
+  **`SELF_ACTION_FORBIDDEN`** (`"You cannot revoke your own admin access."`), if the admin targets
+  their own account — the UI should disable/hide the suspend action on the signed-in admin's own row
+  rather than let the request round-trip and fail. Both 404 with the standard `NOT_FOUND` shape for
+  an unknown id.
+- ⚠️ Suspension is not instantaneous: it blocks the next login/refresh, but an already-issued access
+  token stays valid until its ~10-minute TTL naturally expires. Don't word the confirm dialog or a
+  success toast as "user logged out immediately" — say "access revoked" instead.
+- Auth: same `AdminGuard` as every other `/admin/*` route — nothing new needed.
+- Built as `/admin/users` (`features/admin/components/user-management.tsx`) extending the same
+  `features/admin/{admin.api.ts, admin.types.ts, hooks/use-admin.ts}` module (`listUsers`,
+  `suspendUser`, `activateUser`, `AdminUserRow`/`AdminUserStatus`), plus a nav entry in
+  `admin-nav-items.ts` — same one-module-per-domain convention as Integrations. A plain `<table>`
+  (email, status badge, plan, lifetime spend, resumes, cover letters, referrals `invited/qualified`,
+  actions), following `run-inspector.tsx`'s exact existing table markup — no new shared
+  `components/ui/table.tsx` was justified for a second use case.
+- Debounced email search (new, first-ever debounce util in this codebase —
+  `hooks/use-debounced-value.ts`, root-level since any future search box can reuse it) + an
+  immediate-refetch `ChipGroup` status filter (all/active/suspended/deleted) — status is discrete
+  clicks, not keystrokes, so no debounce there.
+- Self-guard: the signed-in admin's own row **hides** (not disables) the Suspend button
+  (`row.id === currentUserId`, `stores/auth.store.ts`, read once per page render, not per row) —
+  confirmed live the backend's `SELF_ACTION_FORBIDDEN` guard is real and independent of this UI
+  nicety (curled it directly against the admin's own id).
+- Suspend goes through a `Modal` confirm (matching `credit-pack-management.tsx`'s archive-confirm
+  precedent) whose copy says "revoke access," names the ~10-minute token-TTL caveat explicitly, and
+  never says "logged out immediately," per this doc's own wording rule above. Activate has no
+  confirm step and reuses the mutation's own (not per-row) `isPending` for its loading state — same
+  accepted precedent `credit-pack-management.tsx`'s Activate button already established.
+- Full live verification performed (throwaway account `referral-test-sprint13@example.com`, never
+  a real user): `lastLoginAt` confirmed to come back as a genuine JSON `null` (not an absent key)
+  for a never-logged-in account — the drafted `string | null` type needed no fix. Empty search and
+  `status=deleted` both confirmed 200 with `{data: [], hasMore: false}`, not an error. Suspend →
+  activate round-trip confirmed exactly `{status:"suspended"}` → `{status:"active"}`, account
+  restored to its original clean state after. A syntactically-valid-but-nonexistent UUID confirmed
+  plain `NOT_FOUND`. Self-suspend against the admin's own real id confirmed
+  `SELF_ACTION_FORBIDDEN` exactly as documented. Playwright pass confirmed all 8 real UI states:
+  own-row Suspend hidden, debounced search, confirm-modal copy, full suspend→toast→badge-flip→
+  activate→toast→badge-flip round-trip, and the status `ChipGroup` filtering correctly.
+- **Not verified**: "Load more" cursor pagination — this dev environment only has 4 total users, so
+  no second page is reachable to click through. Flagged as an untested gap rather than a fabricated
+  pass; the `hasMore`/`nextCursor` wiring itself matches the already-proven `useAuditLog`/
+  `useAdminReferrals` `useInfiniteQuery` pattern exactly, so risk is low, but it hasn't been clicked.
+- Updated Postman collection/environment (same two `docs/` files) — new `"Admin — Users"` folder
+  (List/Suspend/Activate requests) with real response shapes and the `SELF_ACTION_FORBIDDEN` 400
+  example.

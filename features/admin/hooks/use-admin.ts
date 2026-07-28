@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api/error";
 import { adminApi } from "../admin.api";
-import type { PlanInput, CreditPackInput, PaymentConfig } from "../admin.types";
+import type { PlanInput, CreditPackInput, PaymentConfig, IntegrationProvider, AdminUserStatus } from "../admin.types";
 
 // A 403 (admin-role-but-not-allowlisted) isn't retried — the global query client default already
 // skips 4xx (lib/query.ts).
@@ -165,4 +165,46 @@ export function useAdminReferrals() {
 
 export function useAdminReferralStats() {
   return useQuery({ queryKey: ["admin", "referral-stats"], queryFn: adminApi.getReferralStats });
+}
+
+export function useIntegrationsOverview() {
+  return useQuery({ queryKey: ["admin", "integrations", "overview"], queryFn: adminApi.getIntegrationsOverview });
+}
+
+export function useIntegrationDaily(provider: IntegrationProvider, days: number) {
+  return useQuery({ queryKey: ["admin", "integrations", provider, days], queryFn: () => adminApi.getIntegrationDaily(provider, days) });
+}
+
+export function useAdminUsers(filters: { search?: string; status?: AdminUserStatus | "all" }) {
+  const apiFilters = { search: filters.search, status: filters.status === "all" ? undefined : filters.status };
+  return useInfiniteQuery({
+    queryKey: ["admin", "users", apiFilters],
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) => adminApi.listUsers({ ...apiFilters, cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => (last.hasMore ? (last.nextCursor ?? undefined) : undefined),
+  });
+}
+
+export function useSuspendUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => adminApi.suspendUser(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      toast("Access revoked — takes effect on their next login or token refresh", "success");
+    },
+    onError: toastSaveError,
+  });
+}
+
+export function useActivateUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => adminApi.activateUser(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      toast("Account reactivated", "success");
+    },
+    onError: toastSaveError,
+  });
 }
