@@ -3,20 +3,20 @@
 import { useEffect, useRef, type PropsWithChildren } from "react";
 import { api } from "@/lib/api/client";
 import { useAuthStore } from "@/stores/auth.store";
-import { Spinner } from "@/components/ui/spinner";
 import type { User } from "@/lib/api/types";
 
 /**
  * A returning user reloads the page: their access token lived in memory (gone on reload), but
  * the httpOnly refresh cookie is still in the browser. We must silently exchange the cookie for a
- * new session BEFORE rendering anything — otherwise the user sees a flash of the login screen on
- * every refresh, which makes the whole app feel broken.
+ * new session — otherwise the (app)/(auth) groups would flash their signed-out state on every
+ * reload before this resolves.
  *
- * While the refresh is in flight, auth.status stays 'loading' and this renders a splash instead of
- * children. Only after it resolves do we know authed vs anon.
+ * This component ONLY fires the refresh call now — it does NOT block rendering (see below for why
+ * that changed). auth.status stays 'loading' until this resolves; RequireAuth and
+ * RedirectIfAuthed are the ones that actually show a splash while 'loading', scoped to the
+ * (app)/(auth) groups that care about auth state at all.
  */
 export function AuthBootstrap({ children }: PropsWithChildren) {
-  const status = useAuthStore((s) => s.status);
   const setSession = useAuthStore((s) => s.setSession);
   const clear = useAuthStore((s) => s.clear);
   const ran = useRef(false);
@@ -37,13 +37,9 @@ export function AuthBootstrap({ children }: PropsWithChildren) {
     })();
   }, [setSession, clear]);
 
-  // Block the whole app until we KNOW authed-or-anon. This is what prevents the login flash.
-  if (status === "loading") {
-    return (
-      <div className="grid min-h-screen place-items-center bg-bg">
-        <Spinner className="h-6 w-6 text-primary" />
-      </div>
-    );
-  }
+  // Previously blocked ALL children (including public pages) on a full-page spinner while
+  // 'loading' — that meant the server-rendered HTML for a public route like the marketing
+  // landing page was a spinner, not the actual content, defeating SSR/SEO for any page outside
+  // (app)/(auth). Public routes now render immediately; only the two guards below still gate.
   return <>{children}</>;
 }

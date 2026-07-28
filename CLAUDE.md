@@ -687,3 +687,84 @@ response. Full detail in `features/dashboard/dashboard.api.ts`'s own header comm
   the sprint doc's own `FirstRunEmptyState` passed it a `<div>` of two buttons, a real type
   mismatch against the actual shared component (confirmed in `components/ui/empty-state.tsx`).
   Built as `EmptyState` (no action) plus a manually-rendered two-button row below it instead.
+
+## Landing page (marketing, SEO) — 2026-07-28
+
+The old bare `/` placeholder is replaced by a real, server-rendered marketing site: `app/(marketing)/`
+(homepage, `/pricing`, and three keyword pages under `(features)/`), plus `app/sitemap.ts`/
+`app/robots.ts`/`app/opengraph-image.tsx`. Full detail lives in each file's own comments; key
+things a future session needs to know before touching any of this:
+
+- ⚠️ **A real, load-bearing bug found and fixed before the landing page could work at all**:
+  `providers/auth-bootstrap.tsx` used to block **the entire app** behind a full-page spinner
+  while `auth.status === 'loading'` (confirmed live — curled `/` and saw literal spinner markup
+  in the server-rendered HTML, not the landing page content). That's fine for `(app)`/`(auth)`,
+  which need it, but fatal for any public route: a crawler with no session cookie would see a
+  spinner, not content, every single time. Fixed by moving the loading-splash gate OUT of
+  `AuthBootstrap` (which now only fires the `/auth/refresh` call and always renders `children`
+  immediately) and INTO `RequireAuth`/`RedirectIfAuthed` themselves — the two guards that
+  actually need to know 'loading' vs resolved. `(app)`/`(auth)` behavior is unchanged; routes
+  outside both groups (the marketing pages) now render instantly regardless of auth state.
+- A third, non-blocking variant exists for the marketing pages specifically:
+  `components/auth/marketing-auth-redirect.tsx` (`MarketingAuthRedirect`). Unlike
+  `RedirectIfAuthed`, it renders `null` itself (mounted as a sibling of `{children}` in
+  `(marketing)/layout.tsx`, never a wrapper) and never blocks — an already-signed-in visitor
+  sees a brief flash of the landing page before the client-side redirect to `/dashboard` fires.
+  That tradeoff is deliberate: a public page must always paint immediately, full stop.
+- ⚠️ **Real, confirmed-live title-doubling bug**: the root layout (`app/layout.tsx`) already
+  defines `title.template: "%s · TalentPilot"` for `(app)/(auth)/(admin)`. Without `title.absolute`
+  on `(marketing)/layout.tsx`'s own title, the root template wraps the marketing layout's title
+  too, producing `"...ATS Checker · TalentPilot"` (doubled, confirmed via curling `/` and reading
+  the literal `<title>` tag). Fixed with `title: { absolute: "...", template: "%s | TalentPilot" }`
+  — `absolute` opts the homepage out of every ancestor template; the marketing group's OWN
+  `template` still applies normally to its child pages (`/pricing` → `"Pricing | TalentPilot"`,
+  not double-suffixed either). Confirmed live both ways after the fix.
+- ⚠️ **`sitemap.ts` and `robots.ts`/`opengraph-image.tsx` do NOT behave the same way inside a route
+  group, confirmed live by actually curling all three**: `app/(marketing)/sitemap.ts` correctly
+  resolves to `/sitemap.xml` (route groups are transparent to the URL for this one), but
+  `app/(marketing)/robots.ts` and `app/(marketing)/opengraph-image.tsx` both 404'd (the app's real
+  `not-found.tsx` rendered, not a 500) until moved to the true `app/` root
+  (`app/robots.ts`, `app/opengraph-image.tsx`). Don't assume route-group transparency applies
+  uniformly across every special file convention — it doesn't, and the only way to know is to
+  actually request the URL, which is exactly how this was caught.
+- No `@radix-ui/react-accordion` is installed (the original spec assumed it was) — the FAQ
+  (`(marketing)/components/faq.tsx`) uses a native `<details>`/`<summary>` instead, styled with
+  Tailwind and a pure-CSS `group-open:rotate-180` chevron. This is strictly better than adding the
+  dependency: zero client JS (the whole FAQ section is a Server Component), and the answer text is
+  guaranteed to stay in the DOM when collapsed (required for the FAQPage JSON-LD to be valid).
+- No `NEXT_PUBLIC_SITE_URL` (or any site-URL env var) existed before this — added it to
+  `.env.local`, defaulting to the local dev server (`http://localhost:3001`), NOT a guessed
+  production domain. `lib/site-config.ts` (`SITE_URL`, `SITE_NAME`) is the one place every
+  canonical URL / OG URL / sitemap / robots entry reads from — update the env var before deploying
+  to a real domain, never hardcode one in a page file.
+- `/pricing` and the homepage's pricing teaser both fetch the REAL, live plan catalog
+  (`(marketing)/lib/get-public-plans.ts`, a plain server-side `fetch` against `GET /plans`) —
+  deliberately NOT the app's `features/payments/payment.api.ts` client wrapper, which is coupled
+  to the browser-only Zustand auth store and axios interceptors that have no place in a Server
+  Component render. Real plan prices have already changed twice in this project's history (see
+  "Billing: cancel / switch / packs" above) — this page must never hardcode a price. Degrades to
+  a "sign up to see current plans" message (not a crash) if the backend is unreachable at
+  request/build time.
+- No SocialProof or Testimonials section, and the JSON-LD `SoftwareApplication` schema
+  deliberately has NO `aggregateRating` — this is a genuinely new product with no real customer
+  logos, usage stats, or reviews yet. Fabricating any of those (a "trusted by X companies" strip,
+  invented quotes from made-up people, a made-up star rating) is the same category of deception
+  Google's own spam policy targets for `aggregateRating` specifically — treated as a hard no
+  across the board, not just for that one schema field. Add real versions once real usage/reviews
+  exist, never before. `ScoreDemo`'s illustrative report ("Senior Backend Engineer", generic
+  matched/missing keywords) is explicitly labeled "Example report — illustrative" for the same
+  reason — a mockup of the UI is fine, implying it's a real customer's data is not.
+- The dev machine this was built on is memory-constrained (confirmed: 7.4GB total, well under 1GB
+  free during a build attempt) — a full `next build`'s static-generation phase OOM'd twice
+  (Turbopack's own first failure was a separate, transient Windows "insufficient system resources"
+  error). `tsc --noEmit` and `eslint` both pass clean, and every route was verified instead via the
+  dev server + curl (title tags, section text, JSON-LD, sitemap/robots/OG all confirmed live) —
+  don't treat a future OOM'd `next build` on this machine as a code regression without first
+  checking whether `tsc`/lint are actually clean and the dev server renders correctly.
+- ⚠️ **Everything in this section was built once, then wiped (files deleted, `.env.local` and the
+  three auth-gate files reverted to their pre-fix state) by an action outside this session, and
+  rebuilt a second time from scratch in the same session** — confirmed by re-listing every
+  directory before restoring anything, rather than assuming what survived. If something described
+  here seems to be missing again later, check the actual filesystem before concluding it was never
+  built; this has already happened once.
+

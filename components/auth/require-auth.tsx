@@ -3,13 +3,14 @@
 import { useEffect, type PropsWithChildren } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/stores/auth.store";
+import { FullPageSpinner } from "@/components/ui/full-page-spinner";
 
 /**
- * Guards the (app) route group. Reacts to 'anon' and 'authed' — and does NOTHING on 'loading'.
- * AuthBootstrap holds the whole app on a splash during 'loading', so this never sees a
- * still-resolving state hit the redirect. If this redirected on 'loading' too, every reload would
- * flash /login before the refresh completes. Bootstrap owns 'loading', this guard owns the
- * resolved states — that split is the entire pattern.
+ * Guards the (app) route group. Reacts to 'anon' and 'authed', and shows a splash on 'loading' —
+ * this is the ONLY place that gate lives now (AuthBootstrap used to block the whole app on it;
+ * moved here so public routes outside (app)/(auth) render immediately instead of behind a global
+ * spinner). If this redirected on 'loading' too, every reload would flash /login before the
+ * refresh completes — so 'loading' shows the splash, never redirects.
  */
 export function RequireAuth({ children }: PropsWithChildren) {
   const status = useAuthStore((s) => s.status);
@@ -25,6 +26,7 @@ export function RequireAuth({ children }: PropsWithChildren) {
     if (status === "authed" && user && !user.isVerified) router.replace("/verify-email");
   }, [status, user, router]);
 
+  if (status === "loading") return <FullPageSpinner />;
   if (status !== "authed") return null;
   if (user && !user.isVerified) return null;
 
