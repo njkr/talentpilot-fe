@@ -1,4 +1,4 @@
-import { HomeIcon, DocumentTextIcon, BriefcaseIcon, RectangleStackIcon, CreditCardIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
+import { HomeIcon, DocumentTextIcon, BriefcaseIcon, RectangleStackIcon, CreditCardIcon, GiftIcon, Cog6ToothIcon } from "@heroicons/react/24/outline";
 
 // One place defines the nav. Add a route here -> it appears in the sidebar. No duplication.
 export const navItems = [
@@ -7,5 +7,6 @@ export const navItems = [
   { href: "/jobs", label: "Jobs", icon: BriefcaseIcon },
   { href: "/workspaces", label: "Workspaces", icon: RectangleStackIcon },
   { href: "/billing", label: "Billing", icon: CreditCardIcon },
+  { href: "/invite", label: "Invite & earn", icon: GiftIcon },
   { href: "/settings", label: "Settings", icon: Cog6ToothIcon },
 ] as const;
