@@ -26,8 +26,8 @@ export function WorkspaceView({ workspace }: { workspace: Workspace }) {
         value={tab}
         onValueChange={setTab}
         items={[
-          { value: "report", label: "ATS Report", content: <ReportTab workspaceId={workspace.id} active={tab === "report"} /> },
-          { value: "suggestions", label: "Suggestions", content: <SuggestionsTab workspaceId={workspace.id} active={tab === "suggestions"} /> },
+          { value: "report", label: "ATS Report", content: <ReportTab workspaceId={workspace.id} resumeId={workspace.resumeId} active={tab === "report"} /> },
+          { value: "suggestions", label: "Suggestions", content: <SuggestionsTab workspaceId={workspace.id} resumeId={workspace.resumeId} active={tab === "suggestions"} /> },
           { value: "cover-letter", label: "Cover Letter", content: <CoverLetterTab workspaceId={workspace.id} active={tab === "cover-letter"} /> },
           { value: "interview", label: "Interview", content: <InterviewTab workspaceId={workspace.id} active={tab === "interview"} /> },
           { value: "company", label: "Company", content: <CompanyTab workspaceId={workspace.id} active={tab === "company"} /> },

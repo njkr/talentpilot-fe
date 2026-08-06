@@ -8,8 +8,9 @@ import { ScoreCard } from "./score-card";
 import { ScoreBreakdown } from "./score-breakdown";
 import { KeywordTable } from "./keyword-table";
 import { InsightsCard } from "./insights-card";
+import { RecalculateScoreButton } from "./recalculate-score-button";
 
-export function ReportTab({ workspaceId, active }: { workspaceId: string; active: boolean }) {
+export function ReportTab({ workspaceId, resumeId, active }: { workspaceId: string; resumeId: string; active: boolean }) {
   const { data: report, isLoading, error } = useReport(workspaceId, active);
 
   if (isLoading) return <ReportSkeleton />;
@@ -21,8 +22,8 @@ export function ReportTab({ workspaceId, active }: { workspaceId: string; active
 
   return (
     <div className="space-y-4">
-      <ScoreCard report={report} />
-      <ScoreBreakdown breakdown={report.scoreBreakdown} overallScore={report.overallScore} />
+      <ScoreCard report={report} actions={<RecalculateScoreButton workspaceId={workspaceId} resumeId={resumeId} report={report} />} />
+      <ScoreBreakdown breakdown={report.scoreBreakdown} overallScore={report.overallScore} originalBreakdown={report.original?.scoreBreakdown} />
       <KeywordTable keywords={report.keywords} />
       <InsightsCard report={report} />
     </div>

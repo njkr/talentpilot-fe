@@ -46,7 +46,7 @@ function WorkspacePageInner({ id }: { id: string }) {
         <Card className="text-center py-10">
           <H3>Ready to analyze</H3>
           <Body className="mt-1 mb-4">Run the full analysis to score and optimize this application.</Body>
-          <AnalyzeButton workspaceId={id} />
+          <AnalyzeButton workspaceId={id} resumeId={workspace.resumeId} jobDescriptionId={workspace.jobDescriptionId} />
         </Card>
       </div>
     );

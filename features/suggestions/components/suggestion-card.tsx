@@ -3,6 +3,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Caption } from "@/components/ui/typography";
 import { ImpactBadge } from "@/components/ui/impact-badge";
 import { cn } from "@/lib/utils";
+import { NeedsInfoCard } from "./needs-info-card";
 import type { AiSuggestion } from "../suggestion.types";
 
 // `newText` consistently arrives wrapped in literal quote characters baked into the string
@@ -17,11 +18,18 @@ function stripWrappingQuotes(text: string): string {
 
 interface SuggestionCardProps {
   suggestion: AiSuggestion;
+  workspaceId: string;
+  resumeId: string;
   selected: boolean;
   onToggle: () => void;
 }
 
-export function SuggestionCard({ suggestion, selected, onToggle }: SuggestionCardProps) {
+export function SuggestionCard({ suggestion, workspaceId, resumeId, selected, onToggle }: SuggestionCardProps) {
+  // Not applyable/selectable — a distinct card with its own resubmit/skip actions.
+  if (suggestion.status === "needs_info") {
+    return <NeedsInfoCard suggestion={suggestion} workspaceId={workspaceId} resumeId={resumeId} />;
+  }
+
   return (
     <Card className={cn("transition-colors", selected && "border-primary bg-primary/[0.02]")}>
       <div className="flex items-start gap-3">

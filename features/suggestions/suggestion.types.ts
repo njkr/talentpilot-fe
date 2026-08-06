@@ -14,7 +14,19 @@ export interface AiSuggestion {
   reason: string;
   impact: "high" | "medium" | "low";
   keywordsAdded: string[];
-  status: "pending" | "accepted" | "rejected" | "stale";
+  // needs_info: the fabrication guard couldn't verify newText against the resume, so it's saved
+  // instead of dropped. On a needs_info row, BOTH newText and exampleValue are illustrative-only
+  // (the AI invented them) — never render them as an applyable diff the way a pending row's
+  // newText is rendered.
+  status: "pending" | "accepted" | "rejected" | "stale" | "needs_info";
+  missingFact: string | null; // only populated on needs_info — what fact the AI couldn't verify
+  exampleValue: string | null; // only populated on needs_info — an illustrative, fabricated example
+  // true when the violation is an unsupported skill/technology claim (e.g. the AI tried to add
+  // "Unity" with zero resume evidence) — provide-detail can NEVER resolve this, since it checks
+  // the resubmitted text against the resume's frozen original text, which can never contain a
+  // skill added after upload. missingFact is already a complete, standalone sentence explaining
+  // this and pointing at editing the resume directly; exampleValue is always null on these rows.
+  needsDirectEdit: boolean;
 }
 
 export interface ApplySuggestionsResult {

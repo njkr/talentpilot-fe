@@ -10,7 +10,7 @@ import { useSuggestions } from "../hooks/use-suggestions";
 import { useApplySuggestions } from "../hooks/use-apply-suggestions";
 import { SuggestionCard } from "./suggestion-card";
 
-export function SuggestionsTab({ workspaceId, active }: { workspaceId: string; active: boolean }) {
+export function SuggestionsTab({ workspaceId, resumeId, active }: { workspaceId: string; resumeId: string; active: boolean }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const { data: suggestions, isLoading } = useSuggestions(workspaceId, active);
   const apply = useApplySuggestions(workspaceId);
@@ -26,6 +26,11 @@ export function SuggestionsTab({ workspaceId, active }: { workspaceId: string; a
       return next;
     });
 
+  // needs_info rows aren't apply-able — their newText/exampleValue are illustrative-only until
+  // the user supplies a real detail via NeedsInfoCard — so they're excluded from bulk selection.
+  const selectable = suggestions.filter((s) => s.status !== "needs_info");
+  const needsInfoCount = suggestions.length - selectable.length;
+
   return (
     <div className="space-y-4">
       {/* Reassure the user these are fact-checked — it's a real differentiator (the backend's
@@ -37,30 +42,32 @@ export function SuggestionsTab({ workspaceId, active }: { workspaceId: string; a
 
       <div className="flex items-center justify-between">
         <Body>
-          {suggestions.length} suggestions · {selected.size} selected
+          {selectable.length} pending{needsInfoCount > 0 ? ` · ${needsInfoCount} need more detail` : ""} · {selected.size} selected
         </Body>
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(suggestions.map((s) => s.id)))}>
-            Select all
-          </Button>
-          <Button
-            size="sm"
-            disabled={selected.size === 0}
-            loading={apply.isPending}
-            onClick={() =>
-              apply.mutate([...selected], {
-                onSuccess: () => setSelected(new Set()),
-              })
-            }
-          >
-            Apply {selected.size || ""}
-          </Button>
-        </div>
+        {selectable.length > 0 && (
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set(selectable.map((s) => s.id)))}>
+              Select all
+            </Button>
+            <Button
+              size="sm"
+              disabled={selected.size === 0}
+              loading={apply.isPending}
+              onClick={() =>
+                apply.mutate([...selected], {
+                  onSuccess: () => setSelected(new Set()),
+                })
+              }
+            >
+              Apply {selected.size || ""}
+            </Button>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">
         {suggestions.map((s) => (
-          <SuggestionCard key={s.id} suggestion={s} selected={selected.has(s.id)} onToggle={() => toggle(s.id)} />
+          <SuggestionCard key={s.id} suggestion={s} workspaceId={workspaceId} resumeId={resumeId} selected={selected.has(s.id)} onToggle={() => toggle(s.id)} />
         ))}
       </div>
     </div>

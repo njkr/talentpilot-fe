@@ -16,7 +16,7 @@ const LABELS: Record<string, string> = {
   grammar: "Grammar & tone",
 };
 
-export function ScoreBreakdown({ breakdown, overallScore }: { breakdown: ScoreComponent[]; overallScore: number }) {
+export function ScoreBreakdown({ breakdown, overallScore, originalBreakdown }: { breakdown: ScoreComponent[]; overallScore: number; originalBreakdown?: ScoreComponent[] }) {
   return (
     <Card>
       <H3 className="mb-1">How this score was calculated</H3>
@@ -27,21 +27,34 @@ export function ScoreBreakdown({ breakdown, overallScore }: { breakdown: ScoreCo
             education when the posting states no education requirement) and are correctly
             excluded from the weighting — confirmed live: a real report had exactly 6 components,
             no education row, and the remaining weights summed to 1.0 on their own. */}
-        {breakdown.map((c) => (
-          <div key={c.component}>
-            <div className="flex items-baseline justify-between text-sm">
-              <span className="text-ink">{LABELS[c.component] ?? c.component}</span>
-              <span className="text-ink-secondary">
-                {c.score}
-                <span className="text-ink-muted"> × {Math.round(c.weight * 100)}% = </span>
-                <span className="font-medium text-ink">{c.contribution.toFixed(1)}</span>
-              </span>
+        {breakdown.map((c) => {
+          // originalBreakdown is only present once a rescore has run — and a component present
+          // now may not have existed in the very first report (or vice versa), so this is a
+          // best-effort lookup, not a guaranteed pairing.
+          const original = originalBreakdown?.find((o) => o.component === c.component);
+          const delta = original ? c.score - original.score : null;
+          return (
+            <div key={c.component}>
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="text-ink">{LABELS[c.component] ?? c.component}</span>
+                <span className="text-ink-secondary">
+                  {c.score}
+                  {delta !== null && delta !== 0 && (
+                    <span className={cn("ml-1 font-medium", delta > 0 ? "text-success" : "text-danger")}>
+                      ({delta > 0 ? "+" : ""}
+                      {delta})
+                    </span>
+                  )}
+                  <span className="text-ink-muted"> × {Math.round(c.weight * 100)}% = </span>
+                  <span className="font-medium text-ink">{c.contribution.toFixed(1)}</span>
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-bg">
+                <motion.div className={cn("h-full", barTone(c.score))} initial={{ width: 0 }} animate={{ width: `${c.score}%` }} transition={{ duration: 0.5, ease: "easeOut" }} />
+              </div>
             </div>
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-bg">
-              <motion.div className={cn("h-full", barTone(c.score))} initial={{ width: 0 }} animate={{ width: `${c.score}%` }} transition={{ duration: 0.5, ease: "easeOut" }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="mt-4 flex justify-between border-t border-border pt-3 text-sm font-medium">
