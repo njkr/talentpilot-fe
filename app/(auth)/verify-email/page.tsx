@@ -6,15 +6,25 @@ import { AuthShell } from "@/components/auth/auth-shell";
 import { OtpInput } from "@/components/auth/otp-input";
 import { ResendButton } from "@/components/auth/resend-button";
 import { Spinner } from "@/components/ui/spinner";
-import { useVerifyEmail, useResendOtp } from "@/features/auth/auth.hooks";
+import { useVerifyEmail } from "@/features/auth/auth.hooks";
+import { useResendHandler } from "@/features/auth/hooks/use-resend-handler";
 import { ApiError } from "@/lib/api/error";
+import { useAuthStore } from "@/stores/auth.store";
 
 function VerifyEmailForm() {
-  const email = useSearchParams().get("email") ?? "";
+  // ⚠️ Confirmed live: RequireAuth's redirect here (an already-authed-but-unverified user — e.g.
+  // logging into an existing unverified account, login itself returns 200 even when unverified)
+  // carries NO ?email= query param — only the register/login-error flows pass one. Without this
+  // fallback, `email` silently becomes "" and every resend/verify call 400s VALIDATION_FAILED
+  // ("email must be an email") with no visible cause. The session's own user.email is already
+  // populated by then (setSession runs before RequireAuth's redirect effect fires).
+  const emailParam = useSearchParams().get("email");
+  const sessionEmail = useAuthStore((s) => s.user?.email);
+  const email = emailParam ?? sessionEmail ?? "";
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const verify = useVerifyEmail();
-  const resend = useResendOtp();
+  const { handleResend, pending: resendPending } = useResendHandler(email);
 
   const onComplete = (value: string) =>
     verify.mutate(
@@ -34,23 +44,13 @@ function VerifyEmailForm() {
       },
     );
 
-  const handleResend = async (): Promise<number | void> => {
-    try {
-      await resend.mutateAsync({ email });
-    } catch (err) {
-      if (err instanceof ApiError && err.code === "OTP_COOLDOWN") {
-        return err.details?.retryAfterSec as number | undefined;
-      }
-    }
-  };
-
   return (
     <AuthShell title="Check your email" subtitle={`We sent a 6-digit code to ${email}`}>
       <div className="space-y-4">
         <OtpInput value={code} onChange={setCode} onComplete={onComplete} disabled={verify.isPending} />
         {error && <p className="text-sm text-danger text-center">{error}</p>}
         {verify.isPending && <Spinner className="mx-auto h-5 w-5 text-primary" />}
-        <ResendButton onResend={handleResend} pending={resend.isPending} />
+        <ResendButton onResend={handleResend} pending={resendPending} />
       </div>
     </AuthShell>
   );

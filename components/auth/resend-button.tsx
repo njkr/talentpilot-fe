@@ -2,16 +2,18 @@
 
 import { useEffect, useState } from "react";
 
+// Explicit result instead of a bare `number | void` — a caught-and-swallowed error used to return
+// `undefined`, indistinguishable from "no cooldown override, use the default 60s" success case.
+// That made the button start the same countdown whether the resend actually worked or silently
+// failed, with no error shown either way. Each variant now maps to exactly one button behavior.
+export type ResendResult = { status: "sent" } | { status: "cooldown"; retryAfterSec: number } | { status: "error" };
+
 interface ResendButtonProps {
-  // Returns a retryAfterSec override (e.g. from a caught OTP_COOLDOWN error) or undefined to use
-  // the default 60s — kept async so the caller can await the mutation and inspect its error.
-  onResend: () => Promise<number | void>;
+  onResend: () => Promise<ResendResult>;
   pending: boolean;
 }
 
-// 60s cooldown mirrors the backend's OTP_RESEND_COOLDOWN_SEC. If the backend returns OTP_COOLDOWN
-// with details.retryAfterSec (e.g. after a page reload resets our local timer but not the
-// server's), the caller passes that back through onResend's return value to stay in sync.
+// 60s cooldown mirrors the backend's OTP_RESEND_COOLDOWN_SEC.
 export function ResendButton({ onResend, pending }: ResendButtonProps) {
   const [cooldown, setCooldown] = useState(0);
 
@@ -22,8 +24,10 @@ export function ResendButton({ onResend, pending }: ResendButtonProps) {
   }, [cooldown]);
 
   const handle = async () => {
-    const override = await onResend();
-    setCooldown(typeof override === "number" ? override : 60);
+    const result = await onResend();
+    if (result.status === "sent") setCooldown(60);
+    else if (result.status === "cooldown") setCooldown(result.retryAfterSec);
+    // "error": the caller already showed a toast — leave the button enabled, no fake countdown.
   };
 
   return (

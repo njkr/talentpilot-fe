@@ -14,7 +14,8 @@ export function useRegister() {
   });
 }
 
-// Verify → the response carries a session (verification = first login). Store it, go to app.
+// Verify → the response carries a session (verification = first login). Store it, then a one-time
+// "upload your resume" step before the dashboard — not straight to /dashboard.
 export function useVerifyEmail() {
   const router = useRouter();
   const setSession = useAuthStore((s) => s.setSession);
@@ -22,7 +23,7 @@ export function useVerifyEmail() {
     mutationFn: authApi.verifyEmail,
     onSuccess: (s) => {
       setSession(s.accessToken, s.user);
-      router.push("/dashboard");
+      router.push("/getting-started");
     },
   });
 }

@@ -5,11 +5,18 @@ import { FileDropzone } from "@/components/ui/file-dropzone";
 import { useUploadResume } from "../hooks/use-upload-resume";
 import { ApiError } from "@/lib/api/error";
 import { useUiStore } from "@/stores/ui.store";
+import type { Resume } from "../resume.types";
 
-const ACCEPTED_MIME_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-const MAX_BYTES = 10 * 1024 * 1024;
+// Exported so the onboarding wizard's capture-only (no upload yet) dropzone step uses identical
+// accept/size rules without re-declaring the literals.
+export const ACCEPTED_MIME_TYPES = ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
+export const MAX_BYTES = 10 * 1024 * 1024;
 
-export function UploadDropzone() {
+interface UploadDropzoneProps {
+  onUploaded?: (resume: Resume) => void;
+}
+
+export function UploadDropzone({ onUploaded }: UploadDropzoneProps = {}) {
   const [localError, setLocalError] = useState<string | null>(null);
   const upload = useUploadResume();
   const openUpgradeModal = useUiStore((s) => s.openUpgradeModal);
@@ -17,6 +24,7 @@ export function UploadDropzone() {
   const handleFile = (file: File) => {
     setLocalError(null);
     upload.mutate(file, {
+      onSuccess: onUploaded,
       onError: (err) => {
         if (!(err instanceof ApiError)) return;
         // Real codes per the backend's ErrorCode enum — PLAN_LIMIT_REACHED (max resume slots) ->

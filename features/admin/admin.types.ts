@@ -233,6 +233,40 @@ export interface AdminIntegrationDaily {
   days: { day: string; calls: string; errors: string; costUsd?: string }[];
 }
 
+// ── Learning roadmap: admin-configurable affiliate links (2026-08-03) ─────────────────────────
+// Confirmed live against the running backend before building (list, {query} validation 400,
+// duplicate-default 409, and — since Postman's saved collection had no success example for it —
+// PATCH's response shape, which mirrors Create's exactly: the full updated row).
+export const AFFILIATE_LINK_RESOURCE_TYPES = ["documentation", "course", "book", "project", "other"] as const;
+export type AffiliateLinkResourceType = (typeof AFFILIATE_LINK_RESOURCE_TYPES)[number];
+
+// `keyword: null` = the default template for that resourceType (DB-enforced: at most one per
+// type — a second 409s ALREADY_EXISTS). `priority` is a plain number ranking overlapping keyword
+// matches (confirmed live: 0 for a default, 10 for a real keyword override — higher outranks).
+// ⚠️ This resourceType set does NOT match LearningItem.resourceType (features/learning) — that's a
+// real backend inconsistency (article/video roadmap items can never get an affiliateUrl;
+// project/other templates can never match a real item), not something to unify from here.
+export interface AdminAffiliateLink {
+  id: string;
+  resourceType: AffiliateLinkResourceType;
+  keyword: string | null;
+  urlTemplate: string;
+  label: string;
+  active: boolean;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AffiliateLinkInput {
+  resourceType: AffiliateLinkResourceType;
+  keyword?: string;
+  urlTemplate: string;
+  label: string;
+  active?: boolean;
+  priority?: number;
+}
+
 // ── Admin user directory (2026-07-28) ───────────────────────────────────────────────────────
 export type AdminUserStatus = "active" | "suspended" | "deleted";
 

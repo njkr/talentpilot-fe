@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { toast } from "@/components/ui/toast";
 import { ApiError } from "@/lib/api/error";
 import { adminApi } from "../admin.api";
-import type { PlanInput, CreditPackInput, PaymentConfig, IntegrationProvider, AdminUserStatus } from "../admin.types";
+import type { PlanInput, CreditPackInput, PaymentConfig, IntegrationProvider, AdminUserStatus, AffiliateLinkInput } from "../admin.types";
 
 // A 403 (admin-role-but-not-allowlisted) isn't retried — the global query client default already
 // skips 4xx (lib/query.ts).
@@ -204,6 +204,37 @@ export function useActivateUser() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "users"] });
       toast("Account reactivated", "success");
+    },
+    onError: toastSaveError,
+  });
+}
+
+export function useAdminAffiliateLinks() {
+  return useQuery({ queryKey: ["admin", "affiliate-links"], queryFn: adminApi.listAffiliateLinks });
+}
+
+// Create-or-update-by-id, same shape as useSavePlan/useSaveCreditPack — reused for both the modal
+// editor's submit AND the table's inline active-toggle, rather than a third redundant mutation.
+export function useSaveAffiliateLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id?: string } & Partial<AffiliateLinkInput>) =>
+      id ? adminApi.updateAffiliateLink(id, body) : adminApi.createAffiliateLink(body as AffiliateLinkInput),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "affiliate-links"] });
+      toast("Affiliate link saved", "success");
+    },
+    onError: toastSaveError,
+  });
+}
+
+export function useDeleteAffiliateLink() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => adminApi.deleteAffiliateLink(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "affiliate-links"] });
+      toast("Affiliate link deleted", "success");
     },
     onError: toastSaveError,
   });

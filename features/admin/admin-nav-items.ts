@@ -10,6 +10,7 @@ import {
   AdjustmentsHorizontalIcon,
   UserGroupIcon,
   UsersIcon,
+  LinkIcon,
 } from "@heroicons/react/24/outline";
 
 export const adminNavItems = [
@@ -24,4 +25,5 @@ export const adminNavItems = [
   { href: "/admin/payment-config", label: "Payment config", icon: AdjustmentsHorizontalIcon },
   { href: "/admin/referrals", label: "Referrals", icon: UserGroupIcon },
   { href: "/admin/users", label: "Users", icon: UsersIcon },
+  { href: "/admin/affiliate-links", label: "Affiliate links", icon: LinkIcon },
 ] as const;

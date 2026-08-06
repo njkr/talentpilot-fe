@@ -35,7 +35,7 @@ export function MarketingHeader() {
             Sign in
           </Link>
           <Button asChild size="sm">
-            <Link href="/register">Get started free</Link>
+            <Link href="/onboarding">Get started free</Link>
           </Button>
         </div>
 
@@ -71,7 +71,7 @@ export function MarketingHeader() {
               Sign in
             </Link>
             <Button asChild size="lg" className="mt-2 w-full">
-              <Link href="/register" onClick={() => setOpen(false)}>
+              <Link href="/onboarding" onClick={() => setOpen(false)}>
                 Get started free
               </Link>
             </Button>

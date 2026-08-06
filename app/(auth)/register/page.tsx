@@ -5,24 +5,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useRegister } from "@/features/auth/auth.hooks";
 import { applyFieldErrors } from "@/features/auth/apply-field-errors";
+import { registerSchema, type RegisterForm } from "@/features/auth/register-schema";
 import { ApiError } from "@/lib/api/error";
-
-// Mirror the backend policy (>=8 chars, a letter AND a number) so client errors match server errors.
-const schema = z.object({
-  email: z.string().email("Enter a valid email"),
-  password: z
-    .string()
-    .min(8, "At least 8 characters")
-    .regex(/[A-Za-z]/, "Include a letter")
-    .regex(/\d/, "Include a number"),
-});
-type Form = z.infer<typeof schema>;
 
 function RegisterPageInner() {
   const {
@@ -30,13 +19,13 @@ function RegisterPageInner() {
     handleSubmit,
     setError,
     formState: { errors },
-  } = useForm<Form>({ resolver: zodResolver(schema) });
+  } = useForm<RegisterForm>({ resolver: zodResolver(registerSchema) });
   const mutation = useRegister();
   // ?ref=CODE from an invite link (features/referrals) — passed straight through to registration,
   // never shown as a form field.
   const referralCode = useSearchParams().get("ref") ?? undefined;
 
-  const onSubmit = (values: Form) =>
+  const onSubmit = (values: RegisterForm) =>
     mutation.mutate(
       { ...values, referralCode },
       {

@@ -26,12 +26,14 @@ function WorkspacesPageInner() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <H1>Workspaces</H1>
           <Body>Pair a resume with a job description and run the analysis.</Body>
         </div>
-        <Button onClick={() => setDialogOpen(true)}>New analysis</Button>
+        <Button onClick={() => setDialogOpen(true)} className="sm:shrink-0">
+          New analysis
+        </Button>
       </div>
 
       {filter && (
@@ -52,7 +54,7 @@ function WorkspacesPageInner() {
           <EmptyState title="No workspaces yet" description="Create one from a parsed resume and an analyzed job description." action={{ label: "New analysis", onClick: () => setDialogOpen(true) }} />
         )
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {items.map((ws) => (
             <WorkspaceCard key={ws.id} workspace={ws} />
           ))}

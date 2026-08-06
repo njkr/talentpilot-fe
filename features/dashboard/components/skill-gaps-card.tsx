@@ -17,16 +17,19 @@ export function SkillGapsCard({ gaps }: { gaps: DashboardData["topGaps"] }) {
   return (
     <Card>
       <H3 className="mb-1">Recurring skill gaps</H3>
-      <Body className="mb-4">Skills missing across multiple applications — worth closing.</Body>
-      <div className="space-y-2.5">
-        {gaps.map((g) => (
-          <div key={g.keyword}>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-ink">{g.keyword}</span>
-              <Caption>missing in {g.missCount}</Caption>
-            </div>
-            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-bg">
-              <div className="h-full bg-warning/60" style={{ width: `${(g.missCount / max) * 100}%` }} />
+      <Body className="mb-3">Skills missing across multiple applications — worth closing.</Body>
+      <div className="space-y-2">
+        {gaps.map((g, i) => (
+          <div key={g.keyword} className="flex items-center gap-2.5">
+            <span className="w-4 shrink-0 text-right text-xs font-medium text-ink-muted">{i + 1}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="truncate text-ink">{g.keyword}</span>
+                <Caption>{g.missCount}</Caption>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-bg">
+                <div className="h-full rounded-full bg-linear-to-r from-warning/50 to-warning/80" style={{ width: `${(g.missCount / max) * 100}%` }} />
+              </div>
             </div>
           </div>
         ))}

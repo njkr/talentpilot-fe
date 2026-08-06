@@ -17,6 +17,8 @@ import type {
   IntegrationProvider,
   AdminUserRow,
   AdminUserStatus,
+  AdminAffiliateLink,
+  AffiliateLinkInput,
 } from "./admin.types";
 
 export const adminApi = {
@@ -61,4 +63,12 @@ export const adminApi = {
   listUsers: (params: { cursor?: string; search?: string; status?: AdminUserStatus; days?: number }) => api.list<AdminUserRow[]>("/admin/users", params),
   suspendUser: (id: string) => api.post<{ status: AdminUserStatus }>(`/admin/users/${id}/suspend`),
   activateUser: (id: string) => api.post<{ status: AdminUserStatus }>(`/admin/users/${id}/activate`),
+
+  listAffiliateLinks: () => api.get<AdminAffiliateLink[]>("/admin/affiliate-links"),
+  createAffiliateLink: (body: AffiliateLinkInput) => api.post<AdminAffiliateLink>("/admin/affiliate-links", body),
+  // Confirmed live: returns the full updated row, same shape as Create (Postman had no saved
+  // success example for this one — verified directly before relying on it).
+  updateAffiliateLink: (id: string, body: Partial<AffiliateLinkInput>) => api.patch<AdminAffiliateLink>(`/admin/affiliate-links/${id}`, body),
+  // Real hard delete (confirmed live) — unlike Plan/CreditPack, nothing else references these rows.
+  deleteAffiliateLink: (id: string) => api.del<{ deleted: boolean }>(`/admin/affiliate-links/${id}`),
 };

@@ -926,3 +926,440 @@ live-verified end-to-end (curl + Playwright) the same day this doc-only note was
 - Updated Postman collection/environment (same two `docs/` files) — new `"Admin — Users"` folder
   (List/Suspend/Activate requests) with real response shapes and the `SELF_ACTION_FORBIDDEN` 400
   example.
+
+## Learning roadmap: admin-configurable affiliate links — 2026-08-03
+
+New backend feature: `GET /workspaces/:id/learning-roadmap` items now carry an `affiliateUrl` field,
+sourced from an admin-managed set of link templates — not yet built in this frontend, doc-only note
+for whoever picks this up next.
+
+- **Why a template, not an exact link per resource**: roadmap item titles are AI-generated
+  (`build_learning_path`) and often invented rather than drawn from a real catalog — there's no
+  stable "product id" a specific affiliate link could attach to. So admin configures URL *templates*
+  per `resourceType` (`documentation | course | book | project | other`) containing a literal
+  `{query}` placeholder; the backend substitutes the item's own title (URL-encoded) at read time.
+  Admin can also add keyword overrides (e.g. `"aws"` → a specific curated course link) that outrank
+  the generic template when the keyword appears in the title (case-insensitive substring).
+- **`affiliateUrl` is separate from `url`, never overwrites it.** `url` is still the AI's own guess
+  (frequently `null`) — on the rare case the model did produce a real, specific link, silently
+  replacing it with a generic affiliate search page would be a downgrade. Render both: `url` as
+  "view resource" (when non-null) and `affiliateUrl` (when non-null) as a distinct, clearly-labeled
+  affiliate link — don't merge them into one link with two possible hrefs.
+- Confirmed live against a real, completed roadmap (6 real items: `book`/`course`/`documentation`/
+  `project` types): items of a type with no admin template configured get `affiliateUrl: null`
+  (documentation and project, in that test) — never a broken or empty-string link. Real example
+  response shape:
+  ```json
+  {
+    "title": "Kubernetes Basics by Google Cloud",
+    "resourceType": "course",
+    "url": null,
+    "affiliateUrl": "https://www.udemy.com/courses/search/?q=Kubernetes%20Basics%20by%20Google%20Cloud&ranMID=test",
+    "estHours": 15,
+    "priority": "preferred"
+  }
+  ```
+- Admin CRUD — `GET/POST/PATCH/DELETE /admin/affiliate-links` (same `AdminGuard` as every other
+  `/admin/*` route). `POST` body: `{ resourceType, keyword?, urlTemplate, label, active?, priority? }`
+  — omit `keyword` to create the *default* template for that `resourceType`. Confirmed live:
+  - A second default for the same `resourceType` (another row with `keyword` omitted) 409s as
+    `ALREADY_EXISTS` — a DB-level partial unique index, not just an app-side check, so a race between
+    two admin tabs can't create two defaults either.
+  - `urlTemplate` without the literal `{query}` substring 400s as `VALIDATION_FAILED` before it ever
+    reaches the DB — the UI should validate this client-side too rather than relying on the round
+    trip.
+  - `PATCH` is a partial update (only sent fields change) — the natural way to toggle `active` off
+    without deleting a row.
+  - `DELETE` is a real hard delete (unlike `Plan`/`CreditPack`, nothing else references these rows by
+    id, so there's no "existing subscriber" reason to soft-archive instead).
+- Not built yet (doc-only this round) — when picked up: a new admin page/table for managing these
+  templates and overrides (resourceType, keyword, urlTemplate, label, active toggle, priority — a
+  flat CRUD table, same shape as the existing Plans/Credit Packs admin tables), plus updating
+  wherever the learning roadmap is rendered to show `affiliateUrl` as a distinct link when present.
+  Given the low row count expected (one default per resourceType plus a handful of keyword
+  overrides), a simple unpaginated table is the right fit — no infinite-scroll needed here, unlike
+  the Users/Integrations admin views.
+- Updated Postman collection/environment (same two `docs/` files) — new `"Admin — Affiliate Links"`
+  folder (List/Create/Update/Delete, including the `{query}`-validation 400 and duplicate-default 409
+  examples) plus the refreshed "Get Learning Roadmap" response example showing `affiliateUrl`.
+
+## Workspace suggestions: more suggestions, real before/after score, needs_info — 2026-08-04
+
+New backend work only, not built in this frontend yet — doc-only note for whoever picks this up
+next. Live-verified end-to-end via curl against a real workspace (analyze → apply → rescore), so
+every shape below is confirmed real, not just read from source.
+
+- **More suggestions**: the AI's own cap went from "at most 12" to "at most 20" (prompt-only
+  change, `resume_optimization` v2, no schema `.max()` ever existed) — nothing for the frontend to
+  change, but don't assume a hardcoded 12-item list anywhere if one exists.
+- **`needs_info`**: a suggestion the fabrication guard would previously have silently dropped is now
+  saved and returned instead. `GET /workspaces/:id/suggestions` rows gained two nullable fields:
+  ```json
+  {
+    "id": "...",
+    "sectionType": "experience",
+    "oldText": "Led a small team on the checkout redesign.",
+    "newText": "Led a team of 6 engineers on the checkout redesign, cutting cart abandonment by 18%.",
+    "status": "needs_info",
+    "missingFact": "a specific metric or number",
+    "exampleValue": "18%"
+  }
+  ```
+  ⚠️ **Both `newText` and `exampleValue` are illustrative-only on a `needs_info` row** — the AI
+  invented "6 engineers" / "18%" because the resume never says either. Render `newText` the same way
+  you'd render `exampleValue`: clearly labeled "e.g. ..." / "AI suggestion — not from your resume,
+  edit before using," never as an apply-able diff. This is the one place in the whole suggestions UI
+  where `newText` is NOT safe to show as "the proposed change" — every other status (`pending` etc.)
+  still works exactly as today.
+  - Not observed in this session's live run (this particular resume/JD pair didn't trigger one — the
+    model doesn't always invent a fact, that's the point), but the path is exercised by 91 passing
+    backend unit tests with crafted fabrication scenarios (numbers, years, orgs, credentials), so the
+    shape above is trustworthy even without a live screenshot of it.
+  - New endpoint: `POST /workspaces/:id/suggestions/:suggestionId/provide-detail`, body
+    `{ "newText": "your real replacement text" }`. Re-runs the same fabrication check against the
+    user's own submitted text (not just the AI's) — if it's still unverifiable, the suggestion stays
+    `needs_info` with a refreshed `missingFact`/`exampleValue`; if it passes, it flips to `pending`
+    and flows through the existing apply path unchanged. 404s with `"No needs_info suggestion with
+    that id."` if called on anything not currently `needs_info` (e.g. already `pending`) — use this
+    to decide when the provide-detail form should even be reachable.
+  - UI precedent to reuse: `features/jobs/components/missing-fields-banner.tsx` is the existing
+    "ask the user for a missing detail, they may skip" pattern — model the `needs_info` card variant
+    on it (labeled input for the real detail + Save, plus the existing Reject action as "skip").
+- **Real before/after score** — `GET /workspaces/:id/report`'s response gained one new field:
+  ```json
+  {
+    "id": "...", "resumeVersion": 4, "overallScore": 70,
+    "original": {
+      "id": "...", "resumeVersion": 1, "overallScore": 69,
+      "keywords": []
+    }
+  }
+  ```
+  `original` is the very first report ever generated for this workspace (the true "before" score,
+  regardless of how many rescores have happened since) — `null` until at least one rescore has run
+  (i.e. while the current report IS the original). `original.keywords` is always `[]` by design —
+  the frontend only needs `original`'s scores for the diff, not its full keyword list, so don't treat
+  an empty array there as a bug or try to render a keyword table for it.
+  - ⚠️ The score is genuinely recalculated, not synthetic — confirmed live it can move by a small,
+    real amount (69 → 70 in this session's test, from two low-impact skills-section suggestions) or
+    presumably not move at all for cosmetic-only edits. **Never hardcode or imply a target range
+    ("your score will jump to 90+")** — the honest number is the whole point of this feature; the
+    backend will never fabricate one to make the "after" look better.
+- **`POST /workspaces/:id/rescore`** — genuinely new paid AI work (fresh embedding + AI grading),
+  charged separately from the original analysis. Returns `{ "queued": true }` immediately (debits
+  credits synchronously, but the new report lands asynchronously via the worker — same poll-`GET
+  :id/report` pattern as everywhere else in this app, no new SSE channel). Confirmed live: exactly 5
+  credits (`PaymentConfig.rescoreCost`, admin-editable via the existing `/admin/payment-config`
+  PATCH — same pattern as `analyzeCost`/`coverLetterRegenCost`) debited the instant the call
+  succeeds, before the worker has even started.
+  - `409 NO_CHANGES_TO_RESCORE` (`"No changes since your last score — apply some suggestions
+    first."`) if the resume hasn't changed since the last report — confirmed live this fires with NO
+    credit side-effect (balance unchanged), so it's safe to let the user retry immediately after
+    fixing the real problem (nothing to rescore yet). Disable/hide the "Recalculate score" action
+    when the workspace's `analyzedResumeVersion` (or the report's own `resumeVersion`) already
+    matches the resume's current version, rather than relying on the 409 as the primary UX signal.
+  - `402 INSUFFICIENT_CREDITS` and `409 REPORT_NOT_READY` (no analysis has ever completed) are the
+    other two documented failure modes — same shape/handling as the existing `analyze` endpoint's
+    credit/readiness errors.
+- Auth: standard JWT guard, no new roles — same as every other `/workspaces/:id/*` route.
+- Built the same day, see "Report diff, Recalculate score, needs_info suggestions" below — the
+  bullet that used to say "not built yet" here is now stale, kept only for the endpoint-shape
+  documentation above.
+- Updated Postman collection/environment (same two `docs/` files) — new "Recalculate Score" request
+  under the existing Workspaces folder (with the `NO_CHANGES_TO_RESCORE`/`INSUFFICIENT_CREDITS`
+  examples) and a new "Provide Suggestion Detail" request under Suggestions, plus the refreshed "Get
+  Report" response example showing `original`.
+
+## Report diff, Recalculate score, needs_info suggestions — 2026-08-04 (built same day)
+
+Built the three frontend pieces the section above left as doc-only: a before/after score diff on
+the report tab, a "Recalculate score" action, and a `needs_info` suggestion card. Live-verified
+end-to-end via Playwright against the real dev backend (not just curl) — one full paid rescore
+round-trip was actually run (not just the error paths), see below.
+
+- `AtsReport` (`features/report/report.types.ts`) gained `resumeVersion: number` and
+  `original: AtsReport | null`. Confirmed by directly reading the Postman "Get ATS Report" saved
+  response body (not just its description text, which mentions `original` but — worth remembering
+  for next time — a description mentioning a field is NOT proof the saved example was actually
+  refreshed to include it; had to check the raw body string directly): `original` is a full nested
+  `AtsReport`, not a thin stub, confirming CLAUDE.md's own claim above.
+- `ScoreCard` (`features/report/components/score-card.tsx`) renders a delta pill (`+N`/`-N`/`±0`,
+  success/danger/neutral tone) plus a "Was {score}" caption whenever `report.original` is present,
+  and gained an optional `actions` slot (used for the Recalculate button) — unchanged when
+  `original` is `null`. `ScoreBreakdown` also gained an optional `originalBreakdown` prop that
+  renders a per-component `(+N)`/`(-N)` next to each score when the matching component exists in
+  both arrays — the stretch goal from the original ask, confirmed live rendering correctly
+  alongside the overall delta (screenshot: semantic/experience/project/grammar components all
+  showed correct deltas after a real rescore).
+- `RecalculateScoreButton` (new, `features/report/components/recalculate-score-button.tsx`):
+  hardcodes `RESCORE_COST = 5` (same precedent as `AnalyzeButton`'s `ANALYZE_COST = 21` — the real
+  `PaymentConfig.rescoreCost` is admin-only and not reachable from a regular user's report tab).
+  Gates on `report.resumeVersion` vs. the resume's real current version via the already-built
+  `useVersions(resumeId)` hook (`Math.max(...versions.map(v => v.version))`, falling back to
+  `report.resumeVersion` itself when the resume has zero recorded version-events) — disables the
+  button and shows "No changes since your last score" client-side, confirmed live on both an
+  up-to-date workspace (disabled) and a workspace whose resume had changed via a sibling
+  workspace's suggestion-apply flow, since resume versions are per-resume, not per-workspace
+  (enabled). Confirm `Modal` shows the real cost before mutating. `useRescore`/`useRescorePoll`
+  (new hooks, `features/report/hooks/`) mirror `use-analyze.ts`'s idempotency-key pattern and
+  `use-resume-status.ts`'s `usePollUntil` pattern respectively — the poll reuses the exact same
+  query key as `useReport` (`["workspaces", workspaceId, "report"]`) so a landed new report is
+  picked up by the report tab's own query automatically, no separate invalidate needed.
+  ⚠️ Two `react-hooks/set-state-in-effect` ESLint errors surfaced while building this (this
+  project's lint config flags synchronous `setState` calls in a bare effect body) — fixed by
+  deriving `polling`/`stuck` booleans from existing query state instead of resetting a separate
+  boolean via an effect (e.g. `polling = previousReportId !== null && !poll.done` rather than an
+  effect that calls `setPreviousReportId(null)` when done). Worth remembering as the idiomatic fix
+  next time this lint rule fires on a poll-driven component in this codebase.
+  Confirmed live end-to-end (one real paid round trip, deliberately not repeated): clicked
+  Recalculate on a stale workspace, confirm modal showed "5 credits", credits topbar went
+  2102 → 2097 immediately on confirm, "Recalculating…" caption showed while polling, the new
+  report landed within a few seconds with a correct `original` (the very first report for that
+  workspace) and correct per-component deltas, and the button correctly re-disabled afterward.
+  ⚠️ **Open question for the backend team, not yet resolved**: `/rescore`'s Postman entry has
+  `"header": []` (no `Idempotency-Key`) and none of its three documented responses mention
+  `IDEMPOTENCY_KEY_REQUIRED` — unlike `/analyze`, `/payments/checkout`, and
+  `/credit-packs/:id/checkout`, which all explicitly require the header and document that 400.
+  This suggests `/rescore` has no server-side dedup at all. The frontend still generates and sends
+  a fresh key per click (harmless either way, matches the established pattern), but a double-click
+  or network-retry may not actually be protected against a double charge/double rescore the way
+  every sibling paid action is — client-side, the button disabling itself while pending is the
+  only guard right now. Flag to backend: confirm whether `/rescore` reads `Idempotency-Key`, and
+  if not, whether it should for consistency.
+- `AiSuggestion` (`features/suggestions/suggestion.types.ts`) gained `status: "needs_info"` plus
+  nullable `missingFact`/`exampleValue`. `suggestionApi.listPending` (renamed `list`) no longer
+  hardcodes `{ status: "pending" }` as a query param — that filter previously meant a `needs_info`
+  row could never be fetched at all, silently hiding the entire feature. Added
+  `suggestionApi.provideDetail` → `POST .../suggestions/:id/provide-detail`.
+  `NeedsInfoCard` (new, `features/suggestions/components/needs-info-card.tsx`) is modeled on
+  `missing-fields-banner.tsx`'s controlled-input/disabled-until-non-empty/mutation-loading
+  structure, but diverges where the doc requires it: Skip calls the real (previously wired-nowhere)
+  `useRejectSuggestions` hook instead of a purely local dismiss, and a resubmission that's still
+  unverifiable shows an inline "Still couldn't verify that" retry message rather than a toast,
+  since staying `needs_info` is a real expected outcome, not an error. `newText`/`exampleValue` are
+  rendered only inside a clearly labeled "e.g. ... — not from your resume, edit before using" box,
+  never as the green "Suggested" diff box a `pending` row gets. `SuggestionsTab` now computes
+  `selectable = suggestions.filter(s => s.status !== "needs_info")` for "Select all"/the bulk Apply
+  button/the summary line, so needs_info rows can't be bulk-applied.
+  ⚠️ **Not live-verified** — this dev environment's 6 existing workspaces (spot-checked via the API
+  before building, to pick real before/after and stale/up-to-date test cases for the other two
+  features) had zero `needs_info` rows at check time, and reproducing one wasn't attempted live
+  (would require an extra ~21-credit analyze run against a sparse resume/JD pairing with no
+  guarantee of triggering the fabrication guard on any given attempt — the same caveat this
+  section's doc-only note already flagged before any code was written). Confirmed instead via
+  `tsc --noEmit`/`eslint`/`next build` all passing clean, and via a live regression check that the
+  suggestions list still renders correctly with real `pending`-only data after removing the
+  hardcoded status filter (4 real suggestions on a real workspace, unaffected). The actual
+  `NeedsInfoCard` visual/interaction states remain unverified against a real API response — flag
+  this to whoever next has a workspace that produces one.
+
+## Fabrication guard fix, match band, pre-analysis coverage — 2026-08-05
+
+Found and fixed a real, live integrity bug: `FabricationGuardService` had exactly 4 checks (numbers,
+years, multi-word capitalised org phrases, credential language) and **none of them could catch a
+bare single-word skill/technology token** — the org check specifically requires two-or-more
+capitalised words in sequence, so "Git", "Unity", "Cypress", "C#" sailed through untouched. A
+cross-workspace audit of this dev database found 44 real suggestions claiming a keyword absent from
+the resume, 12 of them already `status: "accepted"` — i.e. already live on real resume versions
+(Cypress, Redux, Zustand, MQTT, Unity, C#, Git). This is now fixed server-side; see below for what
+changed in the API surface, and — important — a gap in the frontend `NeedsInfoCard` built in the
+section above that this fix newly exposes.
+
+- **`AiSuggestion`/`SuggestionResponse` gained `needsDirectEdit: boolean`.** This is the one field
+  the previous `NeedsInfoCard` build didn't know to look for, and it changes the correct UI behavior
+  for a subset of `needs_info` rows. When `true`, the violation is an unsupported skill/technology
+  claim (e.g. the model tried to add "Unity" or "Cypress" with zero evidence in the resume) — **the
+  existing `provide-detail` text-box flow can never resolve this case**, because it's checked against
+  `resume.rawText`, which is frozen at initial upload and can never contain a skill added later, no
+  matter what the user retypes. Confirmed live: resubmitting text that still mentions the unsupported
+  skill returns the exact same `needs_info` state every time — retrying is not a dead end due to a
+  bug, it's structurally impossible via that path.
+  - ⚠️ **Action needed in `NeedsInfoCard`**: branch on `needsDirectEdit`. When `true`, hide (or
+    de-emphasize) the text-box/Save flow and instead show a link to the resume's direct
+    section-edit page (wherever `PATCH /resumes/:resumeId/sections/:sectionType` is already wired up
+    in this app) with copy like "This skill isn't on your resume — add it directly if it's true, then
+    re-run suggestions," alongside the existing Skip button. When `false`, every existing behavior
+    from the section above is unchanged (missing number/year/org/credential — `provide-detail` is
+    still the right next step there).
+  - Real example response, `missingFact` for this case specifically calls out the skill by name and
+    explains why retyping won't work — safe to render directly, no need to compose your own copy:
+    ```json
+    {
+      "status": "needs_info",
+      "needsDirectEdit": true,
+      "missingFact": "Unity isn't evidenced anywhere in your resume — add it to your Skills section directly if it's genuinely true, then re-run suggestions. Retyping text here can't fix this.",
+      "exampleValue": null
+    }
+    ```
+    `exampleValue` is always `null` on a `needsDirectEdit: true` row (there's no "illustrative
+    example" to show — the model's invented text WAS the violation, not a fact it needs supplementing).
+- **`AtsReport`/report response gained `matchBand`**: `{ band: "low" | "fair" | "strong",
+  requiredMet: number, requiredTotal: number }`, computed from the same `keywords` array the report
+  already returns (no new fetch). `band` is `"low"` below 35% of required keywords matched, `"fair"`
+  35-70%, `"strong"` 70%+ (or trivially `"strong"` when the JD has zero required keywords — nothing
+  to fail). `null` only on the nested `original` report (which intentionally carries no keyword list,
+  per the section above). **Use this to reframe the score header**: "You meet 2 of 6 required
+  skills" lands very differently than "27/100" for the same underlying data — a low score is a
+  fit signal for THIS job, not a grade on the resume. Confirmed live on the Unity-mismatch workspace:
+  `matchBand: { band: "low", requiredMet: 0, requiredTotal: 4 }`.
+- **The existing `/resumes/:resumeId/match/:jdId` endpoint gained a `coverage` field**: `{
+  requiredTotal, requiredMatched, requiredMissing, preferredTotal, preferredMatched,
+  missingRequiredKeywords: string[] }`. This endpoint already exists, is NOT credit-gated, and this
+  app doesn't appear to call it anywhere yet — worth surfacing before the "Analyze" button (or
+  before workspace creation) as a **pre-analysis warning** for a badly-matched JD, so a user sees "4
+  required skills missing: Unity, C#, Git, Firebase" before spending real analysis credits on a
+  match that can't legitimately score well no matter what optimization runs afterward. Confirmed
+  live on the same workspace: `coverage: { requiredTotal: 4, requiredMatched: 0, requiredMissing: 4,
+  preferredTotal: 8, preferredMatched: 0, missingRequiredKeywords: ["Unity","C#","Git","Firebase"] }`.
+  ⚠️ Known tradeoff, not fixed in this round: this endpoint's AI keyword-equivalence pass isn't
+  cached per-call, so surfacing it more prominently will genuinely increase call volume — small cost
+  today, worth revisiting if this becomes a high-traffic pre-analysis gate.
+- Auth: standard JWT guard on all of the above, no new roles.
+- Backend-side: a read-only audit script found and reported (not auto-reverted) 12 already-accepted
+  suggestions with unevidenced skill claims across this dev database — those specific resume
+  versions may still contain a claim like "Cypress" or "Redux" that predates this fix. Not a frontend
+  concern, flagged here only so nobody's confused if an old accepted suggestion still shows a skill
+  the guard would now block.
+- Built the same day, see "NeedsInfoCard needsDirectEdit, match-band badge, pre-analyze warning"
+  below — the bullet that used to say "not built yet" here is now stale, kept only for the
+  endpoint-shape documentation above.
+
+## NeedsInfoCard needsDirectEdit, match-band badge, pre-analyze warning — 2026-08-05 (built same day)
+
+Built the three frontend pieces the section above left as doc-only. Live-verified end-to-end via
+Playwright against the real dev backend — including one real paid `analyze` round trip through the
+new warning modal's "Analyze anyway" path, deliberately not repeated.
+
+- `AiSuggestion` gained `needsDirectEdit: boolean` (real, always-present field). `NeedsInfoCard`
+  (`features/suggestions/components/needs-info-card.tsx`) now branches on it: `true` renders
+  `missingFact` verbatim (it's already a complete sentence — do NOT wrap it in the existing "We
+  couldn't verify {missingFact} from your resume" template, which would double up) plus an "Edit
+  resume" button (`Button asChild` + `Link` to `/resumes/{resumeId}`, same proven pattern as
+  `app/not-found.tsx`) alongside the existing Skip button — no textarea, no Save, no "e.g." example
+  box (`exampleValue` is always `null` here). `false`/absent is byte-for-byte the original
+  textarea-and-Save flow, untouched.
+- Threading `resumeId` down to `NeedsInfoCard` required a small prop chain:
+  `workspace-view.tsx` → `suggestions-tab.tsx` → `suggestion-card.tsx` → `needs-info-card.tsx`,
+  mirroring the exact pattern `resumeId` already took one line above for `ReportTab` in
+  `workspace-view.tsx`. Confirmed live via a regression check on a real workspace's suggestions
+  list (4 real pending suggestions rendered correctly, summary line intact) after this change.
+- ⚠️ **Not live-verified**: no workspace in this dev database currently has a live
+  `needs_info`/`needsDirectEdit: true` row (checked every workspace's `GET .../suggestions` before
+  building). Consistent with the base `needs_info` build's own accepted gap, didn't force one via a
+  speculative ~21-credit analyze run with no guarantee of triggering the fabrication guard on a
+  skill claim specifically. Confirmed instead via clean `tsc`/`eslint`/`next build` and the live
+  regression check above. The `needsDirectEdit: true` visual/interaction states remain unverified
+  against a real API response — flag to whoever next has a workspace that produces one.
+- `AtsReport` gained `matchBand: { band: "low"|"fair"|"strong", requiredMet, requiredTotal } |
+  null`. `ScoreCard` (`features/report/components/score-card.tsx`) renders a tone-coded
+  `MatchBandBadge` (danger/warning/success for low/fair/strong, a local file-scoped helper — same
+  precedent as the existing `ScoreDelta`, not promoted to a shared `components/ui/` component since
+  it's single-use) next to the "ATS compatibility" heading, plus a "You meet {requiredMet} of
+  {requiredTotal} required skills" line underneath — deliberately not softened for a low band, per
+  the feature's own intent. Confirmed live across all three real band values found in this dev
+  database: low (`0 of 4`, an actual Unity-mismatch workspace), fair (`2 of 3`), strong (`2 of 2`).
+- New (from scratch — confirmed via repo-wide grep before building that nothing referenced this
+  endpoint at all yet, no dead scaffolding): `features/workspaces/match.types.ts`
+  (`MatchResult`/`MatchCoverage`, typed to the full real Postman-confirmed response even though
+  only `coverage` is consumed), `features/workspaces/match.api.ts` (`matchApi.check`, no request
+  body, no Idempotency-Key, confirmed live 201 Created), `features/workspaces/hooks/use-check-match.ts`
+  (a plain `useMutation`, deliberately not a `useQuery` — must only fire on an actual Analyze click,
+  never just because the "Ready to analyze" card mounted, per the endpoint's own doc-flagged call-
+  volume cost even though it isn't credit-gated).
+- `AnalyzeButton` (`features/workspaces/components/analyze-button.tsx`) now sequences: credit
+  pre-check (unchanged, fires first — no reason to call `/match` if the user can't afford analysis
+  regardless) → `/match` check → if `requiredMatched / requiredTotal < 0.35` (a **deliberate reuse
+  of the backend's own `matchBand` "low" cutoff**, for consistency between the two features rather
+  than an arbitrary new number), open a `useState<MatchCoverage | null>`-backed confirm modal
+  (object state, not boolean, unlike `recalculate-score-button.tsx`'s static-copy confirm — this
+  modal must render the actual mismatch) showing the real missing keywords and counts, Cancel vs.
+  "Analyze anyway"; otherwise (including ANY `/match` error — a deliberate silent fallback, since
+  this is a soft advisory check that must never block the one action that actually matters)
+  proceeds straight into the same `analyze.mutate(...)` flow as before, unchanged latency for the
+  common well-matched case. `resumeId`/`jobDescriptionId` threaded into `AnalyzeButton` from
+  `app/(app)/workspaces/[id]/page.tsx`, where the full `workspace` object was already in scope.
+  Confirmed live, full round trip: a real badly-matched workspace (Unity JD against a non-Unity
+  resume) correctly opened the modal with real copy ("This role needs Unity, C#, Git, Firebase...
+  You meet 0 of 4 required skills"), Cancel left credits untouched, "Analyze anyway" debited
+  exactly 21 credits and navigated to the real run-progress URL. A real well-matched workspace
+  correctly skipped the modal entirely and went straight to analyze. Three throwaway test
+  workspaces created for this verification were deleted afterward, dev account left clean.
+- The documented `409 JD_NOT_ANALYZED` silent-fallback path is practically unreachable live (a
+  workspace's `jobDescriptionId` always already points to an analyzed JD, since
+  `CreateWorkspaceDialog` only allows picking `status === "analyzed"` jobs) — verified by code
+  review only, the one accepted verification gap for this feature.
+
+## "New analysis" modal redesign — 2026-08-05
+
+A user-supplied design doc addressed real problems with the resume/JD picker (`features/workspaces/
+components/create-workspace-dialog.tsx`): duplicate-looking resume/JD rows with no differentiating
+metadata, a pale ambiguous-looking submit button with no cost shown, no pre-analysis fit signal.
+The doc was written without access to this codebase — it invented `src/features/analysis/...` paths,
+`useDashboard()`/`useResumes()`/`useJobs()` hooks, and field names (`jdId`, `job.title`,
+`resume.headline`, a flat `band` on the match-check response) that don't exist here. Translated to
+real code and live-verified end-to-end via Playwright, including one real free workspace-creation
+round trip through the new post-create navigation.
+
+- ⚠️ **`resume.headline` doesn't exist and isn't cheaply obtainable** — `GET /resumes` returns only
+  bare metadata (`id, title, status, pageCount, wordCount, fileSize, language, parseError,
+  createdAt`), no summary/headline text. Fetching each resume's summary section separately just to
+  render a picker row would be a real N+1 cost. Dropped entirely — rows are differentiated by title
+  + relative upload date + page count + status instead, which turned out to already solve the
+  screenshot's real complaint: the three "JENKINS RAJ…" resumes in this dev DB have genuinely
+  different (if similarly-prefixed) titles — "JENKINS RAJ RESUME FT" / "JENKINS RAJ ATS 2025" /
+  "JENKINS RAJ  RESUME" — that were simply getting visually truncated in the old bare-title-only
+  row; the redesign didn't need a "most recent" tag to fire in this data to fix the actual bug.
+- ⚠️ **The real `/resumes/:id/match/:jdId` response has no `band` field** (`coverage:
+  {requiredTotal, requiredMatched, requiredMissing, preferredTotal, preferredMatched,
+  missingRequiredKeywords}` only, confirmed live and already known from the pre-analyze-warning
+  work earlier this session) — the doc's assumed flat `{requiredMet, requiredTotal, band}` shape
+  doesn't exist. Classification is client-side via a new shared `classifyMatchCoverage()`
+  (`features/workspaces/match.utils.ts`), using the exact same 0.35/0.70 thresholds as
+  `AtsReport.matchBand`'s real server-side definition — `AnalyzeButton`'s own pre-existing inline
+  threshold check was refactored to use this same function, so the pre-analysis modal preview, the
+  pre-Analyze-click warning, and the post-analysis report badge can never silently disagree.
+- `MatchBandBadge` (previously file-local/unexported inside `score-card.tsx`) is now a shared
+  `components/ui/match-band-badge.tsx`, exporting the canonical `MatchBandTier = "low"|"fair"|
+  "strong"` type too — `AtsReport.matchBand.band` now references this type rather than an
+  independently-declared identical union that could drift from it. `components/ui/` importing
+  nothing from `features/*` (and `features/report/`, `features/workspaces/` importing FROM
+  `components/ui/`) keeps the dependency arrow pointing the one correct direction.
+- Both `ResumePicker`/`JobPicker` (`features/workspaces/components/`) keep their existing native
+  `<input type="radio" className="sr-only" name="...">` + `<label>` pattern rather than switching
+  to the doc's hand-rolled `<button role="radio" aria-checked>` — native radios already get grouped
+  arrow-key nav and automatic disabled-row-skipping for free; confirmed live via Playwright
+  (`ArrowDown` on a focused resume radio correctly moved the checked state to the next row).
+  `emptyHint: string` was dropped from both pickers' props (real `EmptyState` component used
+  internally instead) and both now receive the FULL unfiltered resume/job list instead of a
+  pre-filtered "ready only" list, so they can render disabled-with-reason rows (mapping the real
+  6-value `ResumeStatus`/3-value `JobStatus` unions) instead of hiding not-yet-ready items.
+- Job description duplicate detection (grouping by normalized position+company, confirmed live on
+  this dev DB's real duplicate pair — two identical "Full Stack Developer — Avanza Solutions" JDs
+  created ~2 minutes apart) labels each "1 of 2"/"2 of 2" rather than a single "most recent" tag —
+  deliberately richer than the resume side, since a user may want an *older* duplicate (e.g. one an
+  earlier workspace already ran against), not always the newest.
+- New `features/workspaces/hooks/use-match-preview.ts` (`useMatchPreview`, a `useQuery`) is
+  additive alongside the existing `useCheckMatch` mutation (built earlier this session for
+  `AnalyzeButton`'s own imperative on-click check) — not a replacement. The preview needs reactive
+  refetch-on-selection-change; `AnalyzeButton` needs a one-shot imperative check; same underlying
+  `matchApi.check` call, two different hook shapes for two different call patterns.
+- **Real, intentional behavior change, not just a visual redesign**: `CreateWorkspaceDialog` now
+  navigates to `/workspaces/{new-id}` after creating a workspace (`router.push`, mirroring how
+  `use-analyze.ts` already does post-mutation navigation elsewhere in this feature) instead of just
+  closing the dialog and leaving the user on the `/workspaces` list. Confirmed live: creating a
+  workspace is genuinely free (credit balance unchanged, `1897 → 1897`) and the browser lands
+  directly on the new workspace's "Ready to analyze" screen.
+- Footer cost line and the low-balance `/billing` link are purely informational — `ANALYZE_COST`
+  (now exported from `analyze-button.tsx` instead of a private module constant, so both files share
+  the one real value) is what *Analyze* costs later, not what creating the workspace costs (which
+  is free); confirmed live the "Create workspace" button stays enabled regardless of credit balance
+  — gating a free action on a later paid action's cost would itself be a dead end.
+- Confirmed live: search boxes correctly appear only when a list exceeds 4 items (3 resumes → no
+  search box; 6 jobs → search box shown) and correctly filter in place (searching "Unity" against
+  the 6 real jobs left only the one real Unity Developer JD visible).
+- Confirmed live at a 375×667 mobile viewport: the modal's sticky footer (cost line + Create button
+  + disabled-reason caption) stays within the viewport without needing to scroll past it, while the
+  resume/job lists scroll independently above it — achieved purely via `Modal`'s existing
+  `className` override (`max-w-lg max-h-[90vh] overflow-y-auto`) plus the dialog's own internal
+  `sticky bottom-0` footer div; `components/ui/modal.tsx` itself (shared by many unrelated
+  consumers app-wide) was not touched.
