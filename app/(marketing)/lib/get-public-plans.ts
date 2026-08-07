@@ -13,7 +13,16 @@ import type { Plan } from "@/features/payments/payment.types";
  */
 export async function getPublicPlans(): Promise<Plan[]> {
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/plans`, {
+    // Server-side fetch() has no browser origin to resolve a relative URL against,
+    // so this needs an absolute URL — NEXT_PUBLIC_API_URL is now a relative "/api/v1"
+    // path (see next.config.ts's rewrite), which only resolves correctly in the
+    // browser. BACKEND_API_ORIGIN (server-only, same var the rewrite uses) is the
+    // real absolute backend URL; falling back to NEXT_PUBLIC_API_URL keeps local dev
+    // working unchanged, since that's still absolute there (no proxy in dev).
+    const base = process.env.BACKEND_API_ORIGIN
+      ? `${process.env.BACKEND_API_ORIGIN}/api/v1`
+      : process.env.NEXT_PUBLIC_API_URL;
+    const res = await fetch(`${base}/plans`, {
       next: { revalidate: 300 },
     });
     if (!res.ok) return [];
