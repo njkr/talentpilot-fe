@@ -7,8 +7,19 @@ interface RetriableConfig extends InternalAxiosRequestConfig {
   _retried?: boolean;
 }
 
+// This client is browser-only in intent (useAuthStore, cookie-based refresh), but the module can
+// still get bundled into a shared server chunk and evaluated during SSR/build page-data
+// collection, even though nothing server-side ever calls `api`. NEXT_PUBLIC_API_URL can now be a
+// relative path (the same-origin proxy rewrite in next.config.ts), which only resolves against a
+// real browser location — axios's Node-side URL handling has no implicit origin, so a bare
+// relative baseURL throws at construction time there (confirmed live on Vercel: "Invalid URL",
+// input "/api/v1"). Give it a harmless absolute placeholder when evaluated outside a browser; the
+// real relative value is only ever used for actual requests, which only happen client-side.
+const envApiUrl = process.env.NEXT_PUBLIC_API_URL ?? "";
+const baseURL = typeof window === "undefined" && envApiUrl.startsWith("/") ? `http://localhost${envApiUrl}` : envApiUrl;
+
 const raw = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL,
+  baseURL,
   withCredentials: true, // sends the httpOnly refresh cookie
   headers: { "Content-Type": "application/json" },
 });
