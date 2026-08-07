@@ -24,6 +24,10 @@ export async function getPublicPlans(): Promise<Plan[]> {
       : process.env.NEXT_PUBLIC_API_URL;
     const res = await fetch(`${base}/plans`, {
       next: { revalidate: 300 },
+      // The backend's current ngrok tunnel serves an HTML warning page to any request that
+      // doesn't opt out of it — see middleware.ts for the full rationale. This is a direct
+      // fetch (not proxied through middleware), so it needs the header set here too.
+      headers: { "ngrok-skip-browser-warning": "true" },
     });
     if (!res.ok) return [];
     const body = (await res.json()) as { data?: Plan[] };
