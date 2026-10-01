@@ -9,8 +9,7 @@ interface LogoProps {
 }
 
 // "Compass Point" mark — a directional needle + counterweight dot in a rounded-square badge,
-// from the approved brand design (Claude Design project "TalentPilot logo design",
-// 63d7178d-f575-46c5-9208-dbb8b9036766). Proportions are scaled off that design's own per-size
+// from the approved brand design. Proportions are scaled off that design's own per-size
 // examples (16/28/32/44/56/88px) rather than hardcoded per breakpoint, since real usage here spans
 // sizes the design doc didn't enumerate (e.g. the landing page hero). The dot drops below 20px,
 // matching the design's own choice to omit it at its smallest (16px) example — illegible at that

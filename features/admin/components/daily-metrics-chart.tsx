@@ -5,7 +5,7 @@ import { Caption } from "@/components/ui/typography";
 import { cn } from "@/lib/utils";
 
 // Real design tokens from app/globals.css — recharts props take raw color values, not Tailwind
-// classes (the one place CLAUDE.md's "no raw hex" rule doesn't apply). Originally lived in
+// classes (the one place DEVELOPMENT-NOTES.md's "no raw hex" rule doesn't apply). Originally lived in
 // cost-dashboard.tsx; moved here 2026-07-28 when this chart was extracted out to be shared with the
 // new integrations per-provider daily view, so there's one copy instead of two.
 const PRIMARY = "#2563eb";
@@ -29,7 +29,7 @@ interface DailyMetricsChartProps {
 
 // Extracted out of cost-dashboard.tsx's original DailySpendChart (2026-07-28) so the integrations
 // per-provider daily view could reuse the same recharts config instead of duplicating it — see
-// CLAUDE.md's "Admin: third-party integration usage tracking" section for why. `calls`/`errors`
+// DEVELOPMENT-NOTES.md's "Admin: third-party integration usage tracking" section for why. `calls`/`errors`
 // are deliberately tooltip-only, never a second overlaid series/axis: dollars and raw counts don't
 // share a scale, and this codebase has an established "restraint over decorative complexity" taste
 // (e.g. the dashboard score-trend sparkline has no axes at all) that a dual-axis chart would break.

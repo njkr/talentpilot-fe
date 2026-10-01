@@ -33,7 +33,7 @@ export const paymentApi = {
   // both now work.
   switchPlan: (planKey: PlanKey, interval: BillingInterval) => api.post<Subscription>("/payments/subscription/switch", { planKey, interval }),
   // ⚠️ FIXED 2026-07-27, re-confirmed live (previously 500'd INTERNAL_ERROR while a switch was
-  // pending — see CLAUDE.md's "Billing: cancel / switch / packs" section for that history). Cancel
+  // pending — see DEVELOPMENT-NOTES.md's "Billing: cancel / switch / packs" section for that history). Cancel
   // now succeeds in every state, and cancelling while a downgrade was pending clears the pending
   // change too (`pendingPlanKey → null`, `cancelAtPeriodEnd → true`) — cancelling the whole
   // subscription reasonably supersedes a scheduled plan change. CurrentPlanCard's old

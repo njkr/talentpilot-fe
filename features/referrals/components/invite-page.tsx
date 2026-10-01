@@ -68,7 +68,7 @@ function ShareButton({ url, channel }: { url: string; channel: "email" | "linked
     whatsapp: `https://wa.me/?text=${text}%20${u}`,
   }[channel];
   const label = { email: "Email", linkedin: "LinkedIn", whatsapp: "WhatsApp" }[channel];
-  // Heroicons is an outline icon SET, not a brand-logo library (CLAUDE.md's "no non-Heroicons
+  // Heroicons is an outline icon SET, not a brand-logo library (DEVELOPMENT-NOTES.md's "no non-Heroicons
   // icons" rule) — LinkedIn/WhatsApp get the closest generic concept (share / chat) rather than a
   // fabricated brand mark.
   const Icon = { email: EnvelopeIcon, linkedin: ShareIcon, whatsapp: ChatBubbleLeftRightIcon }[channel];

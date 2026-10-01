@@ -1,6 +1,6 @@
 # Data story: workspace suggestions, before/after score & needs_info
 
-Companion to the CLAUDE.md section "Workspace suggestions: more suggestions, real before/after
+Companion to the DEVELOPMENT-NOTES.md section "Workspace suggestions: more suggestions, real before/after
 score, needs_info — 2026-08-04" and the handoff prompt already given. That section is the technical
 contract; this document is the **narrative** — every field the backend now returns, mapped to the
 question it answers for the user, so nothing gets left on the floor when the UI is built. All

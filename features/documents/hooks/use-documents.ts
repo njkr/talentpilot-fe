@@ -74,7 +74,7 @@ export function useDownloadDocument(workspaceId: string) {
   }
 
   // A document that's already `ready` from a previous generation -> skip straight to download,
-  // no need to regenerate. `stale` deliberately does NOT go through this path (CLAUDE.md: treat
+  // no need to regenerate. `stale` deliberately does NOT go through this path (DEVELOPMENT-NOTES.md: treat
   // stale as not-ready) — callers should route stale documents through `request` instead.
   async function downloadReady(doc: GeneratedDocument) {
     const { url, filename } = await documentApi.download(workspaceId, doc.id);

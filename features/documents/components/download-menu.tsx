@@ -56,7 +56,7 @@ function Row({ doc, isPending, onGenerate, onDownload }: { doc: GeneratedDocumen
     );
   }
 
-  // `stale` must NOT offer a direct download — CLAUDE.md: treat stale the same as not ready.
+  // `stale` must NOT offer a direct download — DEVELOPMENT-NOTES.md: treat stale the same as not ready.
   if (doc?.status === "stale") {
     return (
       <Button variant="ghost" size="sm" onClick={onGenerate} className="h-7 px-2 text-xs" title="This file no longer matches the current resume/cover letter">

@@ -9,7 +9,7 @@ import { MetricCard } from "./metric-card";
 import type { DashboardData } from "../dashboard.api";
 
 // Same real design-token hex values already used in features/admin/components/daily-metrics-chart.tsx
-// — recharts props take raw color values, not Tailwind classes, the one place CLAUDE.md's "no raw
+// — recharts props take raw color values, not Tailwind classes, the one place DEVELOPMENT-NOTES.md's "no raw
 // hex" rule doesn't apply (per that component's own note).
 const PRIMARY = "#2563eb";
 

@@ -14,7 +14,7 @@ import { CreditHistory } from "@/features/credits/components/credit-history";
 import { useCredits } from "@/features/credits/credits.hooks";
 
 // Bounded confirmation window after a Stripe Checkout redirect: the redirect itself grants
-// nothing (CLAUDE.md/doc — only the webhook does), so this polls briefly rather than trusting the
+// nothing (DEVELOPMENT-NOTES.md/doc — only the webhook does), so this polls briefly rather than trusting the
 // URL. If the webhook hasn't landed by then, stop polling rather than spin forever.
 const CONFIRM_TIMEOUT_MS = 40000;
 

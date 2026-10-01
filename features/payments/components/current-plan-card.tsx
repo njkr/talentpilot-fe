@@ -79,7 +79,7 @@ export function CurrentPlanCard({ subscription }: { subscription: Subscription }
 
         {/* Cancel — only for a paid plan not already scheduled to cancel. No longer disabled while
             a downgrade is pending: confirmed live 2026-07-27 that the underlying 500 bug (see
-            CLAUDE.md's "Billing: cancel / switch / packs" section) is fixed — cancelling now works
+            DEVELOPMENT-NOTES.md's "Billing: cancel / switch / packs" section) is fixed — cancelling now works
             in every state and clears any pending change too. */}
         {!isFree && !subscription.cancelAtPeriodEnd && (
           <Button variant="ghost" size="sm" icon={NoSymbolIcon} onClick={() => setConfirmCancel(true)} className="text-ink-secondary hover:text-danger">

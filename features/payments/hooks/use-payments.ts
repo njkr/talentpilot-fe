@@ -7,7 +7,7 @@ import { paymentApi } from "../payment.api";
 import type { PlanKey, BillingInterval } from "../payment.types";
 
 // `pollUntilActive`: used only right after a Stripe Checkout redirect back (?checkout=success).
-// The redirect itself is untrustworthy for granting access (CLAUDE.md/doc) — the real activation
+// The redirect itself is untrustworthy for granting access (DEVELOPMENT-NOTES.md/doc) — the real activation
 // comes from Stripe's webhook, which can lag a few seconds behind the redirect. `currentPeriodEnd`
 // is confirmed live to be null on the free plan and only ever set once a real (webhook-activated)
 // paid subscription exists, so "it's no longer null" is a real, grounded terminal signal — not a

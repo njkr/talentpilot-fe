@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { getPublicPlans } from "../lib/get-public-plans";
 
 // Real, live plan data (GET /plans) — never hardcoded prices, which have already changed twice in
-// this project's real history (see CLAUDE.md). If the backend is unreachable at build/request
+// this project's real history (see DEVELOPMENT-NOTES.md). If the backend is unreachable at build/request
 // time, getPublicPlans() returns [] and this section quietly links to /pricing instead of
 // rendering broken/fabricated numbers.
 export async function PricingTeaser() {

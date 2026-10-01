@@ -29,7 +29,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>, VariantPr
   loading?: boolean;
   asChild?: boolean; // render as a child element (e.g. a Next <Link>) via Radix Slot
   // A leading Heroicon (24/outline, matching every icon already used in this project — see
-  // CLAUDE.md's design tokens rule). While `loading` is true the Spinner takes this same leading
+  // DEVELOPMENT-NOTES.md's design tokens rule). While `loading` is true the Spinner takes this same leading
   // slot instead, so a button never shows both at once.
   icon?: IconComponent;
 }

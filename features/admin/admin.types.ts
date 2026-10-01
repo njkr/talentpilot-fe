@@ -76,7 +76,7 @@ export interface PromptVersion {
   createdAt: string;
 }
 
-// Real shape confirmed live. `resourceId` and `ip` are both real (CLAUDE.md's own Sprint 9-11 doc
+// Real shape confirmed live. `resourceId` and `ip` are both real (DEVELOPMENT-NOTES.md's own Sprint 9-11 doc
 // prose already said resourceId was added as a real column; ip is now directly confirmed too).
 export interface AuditEntry {
   id: string;

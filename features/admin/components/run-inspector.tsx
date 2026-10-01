@@ -13,7 +13,7 @@ import type { AdminRunDetail, AdminStep } from "../admin.types";
 // "running"/"pending"/"skipped", which this data's real RunStatus/StepStatus vocabulary
 // (features/workspaces/workspace.types.ts) does include — confirmed live, a real run had
 // `skipped` steps (parse_resume/parse_jd, attempt 0, on a re-analyze where nothing changed).
-// Same reasoning CLAUDE.md already documents for why JobStatusBadge/ResumeStatusBadge are
+// Same reasoning DEVELOPMENT-NOTES.md already documents for why JobStatusBadge/ResumeStatusBadge are
 // separate from it.
 function RunStatusPill({ status }: { status: string }) {
   const tone = status === "completed" ? "success" : status === "failed" ? "danger" : status === "partial" ? "warning" : status === "running" || status === "processing" ? "primary" : "neutral";

@@ -11,7 +11,7 @@ import { api } from "@/lib/api/client";
 // `creditBalance`, `plan.limits.{maxResumes,maxWorkspaces}` instead of `plan.{status,
 // monthlyCredits}`, a flat `counts`/`recentWorkspaces` instead of the nested `resumes`/
 // `workspaces.recent` shape) — all wrong, re-guessing a shape this project already confirmed live
-// in Sprint 2 without checking CLAUDE.md's own Sprint 2 section first (the exact lesson Sprint 11
+// in Sprint 2 without checking DEVELOPMENT-NOTES.md's own Sprint 2 section first (the exact lesson Sprint 11
 // already flagged: check an earlier sprint's harder-won ground truth before trusting a new doc's
 // claim about a system it already covers). Only the genuinely NEW fields below are real additions;
 // every pre-existing field name is untouched from the Sprint 2 shape.
@@ -19,7 +19,7 @@ import { api } from "@/lib/api/client";
 // `resumes.limit: 1000` on the `ultimate` plan is NOT a backend bug (the doc's own closing note
 // flagged it as one) — it's real, already-confirmed plan config from the "Configurable payments"
 // work: `ultimate`'s maxResumes/maxWorkspaces were deliberately changed from -1 (unlimited) to
-// 1000 in this dev environment (see CLAUDE.md's "Billing: cancel / switch / packs" section).
+// 1000 in this dev environment (see DEVELOPMENT-NOTES.md's "Billing: cancel / switch / packs" section).
 export interface DashboardData {
   creditBalance: number;
   plan: { key: string; name: string; status: string; monthlyCredits: number };

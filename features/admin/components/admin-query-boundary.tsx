@@ -3,7 +3,7 @@ import { H3, Body } from "@/components/ui/typography";
 import { ApiError } from "@/lib/api/error";
 
 // The double-gate made visible: a role-admin user NOT on the email allowlist gets a 403 from
-// EVERY admin query. Keyed on HTTP status, not error.code, as a deliberate exception to CLAUDE.md's
+// EVERY admin query. Keyed on HTTP status, not error.code, as a deliberate exception to DEVELOPMENT-NOTES.md's
 // usual "switch on code" rule — confirmed live 2026-07-25 this endpoint reuses the generic
 // INTERNAL_ERROR code for the rejection (the Postman collection's saved example claims FORBIDDEN
 // instead; live wins), so status is the only reliable signal here.

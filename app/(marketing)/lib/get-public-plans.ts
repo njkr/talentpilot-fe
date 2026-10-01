@@ -5,7 +5,7 @@ import type { Plan } from "@/features/payments/payment.types";
  * client `api` wrapper (features/payments/payment.api.ts), which is wired to the browser-only
  * Zustand auth store and axios token-refresh interceptors that have no business running during a
  * Server Component render. Prices are real, admin-editable data that has already changed twice in
- * this project's history (see CLAUDE.md's "Billing: cancel / switch / packs" section) — this page
+ * this project's history (see DEVELOPMENT-NOTES.md's "Billing: cancel / switch / packs" section) — this page
  * must never show fabricated or stale-on-purpose numbers.
  *
  * Returns [] on any failure (network down, backend not running) rather than throwing, so the

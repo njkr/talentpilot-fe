@@ -28,6 +28,6 @@ export const DOCUMENT_LABELS: Record<DocumentType, string> = {
 
 export const DOCUMENT_TYPES: DocumentType[] = ["resume_pdf", "resume_docx", "cover_letter_pdf", "cover_letter_docx", "full_report_pdf"];
 
-// `stale` is deliberately NOT terminal-as-usable — CLAUDE.md: "stale document = treat as not
+// `stale` is deliberately NOT terminal-as-usable — DEVELOPMENT-NOTES.md: "stale document = treat as not
 // ready, regenerate." It IS terminal for polling purposes (stop polling), just not downloadable.
 export const isPollTerminal = (doc: GeneratedDocument) => doc.status === "ready" || doc.status === "failed" || doc.status === "stale";
