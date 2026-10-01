@@ -6,6 +6,41 @@ Next.js frontend for TalentPilot, an AI-assisted ATS resume optimizer and job-ap
 
 Job seekers often don't know why a resume gets filtered out, or how to tailor it to a specific role without exaggerating. TalentPilot scores a resume against a job description, explains the gaps, and proposes grounded edits. It also prepares a cover letter, interview practice, company research, a salary estimate and a learning roadmap for the same role. This repository is the web client; the backend lives in [talentpilot-api](https://github.com/njkr/talentpilot-api).
 
+## Screenshots
+
+### Desktop
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-landing.png" alt="Landing page"><br><sub>Landing page: hero, how it works, features and a sample ATS report</sub></td>
+    <td><img src="docs/screenshots/02-dashboard.png" alt="Dashboard"><br><sub>Dashboard: credits, average score, activity, workspaces and recurring skill gaps</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-resume-parsed.png" alt="Parsed resume"><br><sub>Uploaded resume parsed into structured sections (contact details redacted)</sub></td>
+    <td><img src="docs/screenshots/04-job-description.png" alt="Parsed job description"><br><sub>Job description parsed into required, preferred and nice-to-have requirements and skills</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-ats-report.png" alt="ATS report"><br><sub>ATS report: overall score, weighted score breakdown and keyword coverage</sub></td>
+    <td><img src="docs/screenshots/06-interview-prep.png" alt="Interview prep"><br><sub>Interview prep: HR, technical, coding and system-design questions grounded in the resume, with answer feedback</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/07-admin-users.png" alt="Admin user management"><br><sub>Admin panel: user management (emails redacted)</sub></td>
+    <td><img src="docs/screenshots/08-admin-plans.png" alt="Admin plans"><br><sub>Admin panel: subscription plans synced to Stripe (IDs redacted)</sub></td>
+  </tr>
+</table>
+
+### Mobile
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="docs/screenshots/09-mobile-dashboard.png" alt="Mobile dashboard" width="180"><br><sub>Dashboard</sub></td>
+    <td align="center" valign="top"><img src="docs/screenshots/10-mobile-billing.png" alt="Mobile billing" width="180"><br><sub>Billing: current plan, plans and credit top-up packs</sub></td>
+    <td align="center" valign="top"><img src="docs/screenshots/11-mobile-sign-in.png" alt="Mobile sign-in" width="180"><br><sub>Sign-in</sub></td>
+    <td align="center" valign="top"><img src="docs/screenshots/12-mobile-onboarding.png" alt="Mobile onboarding" width="180"><br><sub>Onboarding: resume upload step</sub></td>
+    <td align="center" valign="top"><img src="docs/screenshots/13-mobile-account-settings.png" alt="Mobile account settings" width="180"><br><sub>Settings: data export and account deletion</sub></td>
+  </tr>
+</table>
+
 ## Key features
 
 **Job-seeker app**
@@ -86,10 +121,8 @@ lib/              API client, SSE helper, utilities, site config
 providers/        Auth bootstrap and query provider
 stores/           Zustand stores
 proxy.ts          Proxies /api/v1 to the backend
-docs/             Development notes, API reference and Postman collection
+docs/             API reference, Postman collection and screenshots
 ```
-
-Architecture notes and confirmed API behaviour are recorded in [docs/DEVELOPMENT-NOTES.md](./docs/DEVELOPMENT-NOTES.md).
 
 ## Related repository
 
