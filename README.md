@@ -2,8 +2,6 @@
 
 Next.js frontend for TalentPilot, an AI-assisted ATS resume optimizer and job-application prep tool.
 
-**Live demo:** [LIVE_DEMO_URL]
-
 ## Overview
 
 Job seekers often don't know why a resume gets filtered out, or how to tailor it to a specific role without exaggerating. TalentPilot scores a resume against a job description, explains the gaps, and proposes grounded edits. It also prepares a cover letter, interview practice, company research, a salary estimate and a learning roadmap for the same role. This repository is the web client; the backend lives in [talentpilot-api](https://github.com/njkr/talentpilot-api).
@@ -37,14 +35,6 @@ Job seekers often don't know why a resume gets filtered out, or how to tailor it
 | `(auth)` | `/login`, `/register`, `/verify-email`, `/forgot-password`, `/reset-password` |
 | `(app)` | `/dashboard`, `/resumes`, `/resumes/[id]`, `/jobs`, `/jobs/new`, `/jobs/[id]`, `/workspaces`, `/workspaces/[id]`, `/billing`, `/settings`, `/invite`, `/getting-started` |
 | `(admin)` | `/admin`, `/admin/costs`, `/admin/integrations`, `/admin/users`, `/admin/plans`, `/admin/credit-packs`, `/admin/payment-config`, `/admin/referrals`, `/admin/affiliate-links`, `/admin/prompts`, `/admin/queues`, `/admin/runs/[id]`, `/admin/audit` |
-
-## Screenshots
-
-| | |
-| --- | --- |
-| ![Dashboard](./docs/screenshots/dashboard.png) | ![ATS report](./docs/screenshots/ats-report.png) |
-| ![Analysis progress](./docs/screenshots/analysis-progress.png) | ![Suggestions](./docs/screenshots/suggestions.png) |
-| ![Resume view](./docs/screenshots/resume.png) | ![Admin overview](./docs/screenshots/admin-overview.png) |
 
 ## Tech stack
 
