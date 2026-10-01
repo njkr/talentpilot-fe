@@ -1,6 +1,8 @@
 {
   "name": "talentpilot-fe",
   "version": "0.1.0",
+  "description": "TalentPilot web app: AI-assisted ATS resume scoring, tailored optimization suggestions and job-application prep (Next.js).",
+  "author": "Jenkins Raj",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
